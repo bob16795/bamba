@@ -1,0 +1,15 @@
+def printf: extern -> i32;
+
+def run: proc callback -> i32 {
+  return callback();
+};
+
+def main: proc -> i32 {
+  def cb: proc -> i32 {
+    return 10;
+  };
+  
+  printf("%d", run(cb));
+
+  return 0;
+};

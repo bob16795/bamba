@@ -1,0 +1,21 @@
+def fib: proc idx -> i32 {
+    if (idx < 2) {
+       return idx;
+    };
+
+    return fib(idx - 1) + fib(idx - 2);
+};
+
+def main: proc -> i32 {
+    def print: extern a -> i32;
+    def val: var i32;
+
+    val = 0;
+
+    while (*val < 30) {
+        val = *val + 1;
+        print(fib(*val));
+    };
+
+    return 0;
+};
