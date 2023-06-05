@@ -69,6 +69,7 @@ pub const Interpreter = struct {
             def: parser.Definition,
             impls: std.ArrayList(ProcImpl),
             ext: bool,
+            inl: bool,
         },
 
         pub fn sameAs(self: *const Value, other: *const Value) bool {
@@ -1009,6 +1010,7 @@ pub const Interpreter = struct {
                         .def = def,
                         .impls = std.ArrayList(ProcImpl).init(self.allocator),
                         .ext = false,
+                        .inl = def.data.Proc.inl,
                     },
                 };
 
@@ -1069,6 +1071,7 @@ pub const Interpreter = struct {
                         },
                         .impls = std.ArrayList(ProcImpl).init(self.allocator),
                         .ext = true,
+                        .inl = false,
                     },
                 };
 
@@ -1098,8 +1101,6 @@ pub const Interpreter = struct {
             }
         }
 
-        std.log.info("Impl - {s}", .{name});
-
         var subDefs = DefList.init(self.allocator);
         defer subDefs.deinit();
 
@@ -1114,7 +1115,8 @@ pub const Interpreter = struct {
         var out = try self.visitExpression(undefined, def.Proc.def.data.Proc.out, &subDefs);
         var kind = try out.getTypeVal();
 
-        if (def.Proc.def.data.Proc.inl and parent != null) {
+        if (def.Proc.inl and parent != null) {
+            std.log.info("Inline - {s}", .{name});
             var outData = self.builder.buildAlloca(kind, try self.allocator.dupeZ(u8, name));
             var resultBB = self.context.appendBasicBlock(parent.?.value.?, "inlineResult");
 
@@ -1139,6 +1141,8 @@ pub const Interpreter = struct {
 
             return copy.*;
         }
+
+        std.log.info("Impl - {s}", .{name});
 
         var argsTypes = try self.allocator.alloc(*llvm.Type, args.len);
 

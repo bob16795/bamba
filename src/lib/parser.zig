@@ -689,6 +689,8 @@ pub const Parser = struct {
         var name = self.current.lexeme;
         try self.advance();
 
+        std.log.info("{}", .{self.current});
+
         if (!try self.match(.COLON)) return error.ExpectedColon;
 
         var defKind = self.current.kind;
