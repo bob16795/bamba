@@ -93,7 +93,7 @@ def ArrayList: proc T -> CTIME {
             ArrayListImpl.ensureTotalCapacity(self, *self.len + 1);
             self.len = *self.len + 1;
 
-            std.mem.memmove(*self.items + index * T.SIZE + 1, *self.items + index * T.SIZE, T.SIZE * (*self.len - index - 1));
+            std.mem.memmove(*self.items + (index + 1) * T.SIZE, *self.items + index * T.SIZE, T.SIZE * (*self.len - index - 1));
             *self.items + index * T.SIZE = item;
 
             return 0;
