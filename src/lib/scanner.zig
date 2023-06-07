@@ -11,6 +11,7 @@ pub const Scanner = struct {
     start: [*]const u8,
     current: [*]const u8,
     line: usize = 1,
+    col: usize = 0,
 
     pub fn init(src: []const u8) Self {
         return Scanner{
@@ -44,6 +45,7 @@ pub const Scanner = struct {
             ']' => self.makeToken(.RIGHT_BRACKET),
             ';' => self.makeToken(.SEMI_COLON),
             ':' => self.makeToken(.COLON),
+            '/' => self.makeToken(.SLASH),
             '~' => self.makeToken(.TILDE),
             '%' => self.makeToken(.PERCENT),
             ',' => self.makeToken(.COMMA),
@@ -106,6 +108,8 @@ pub const Scanner = struct {
                 '/' => {
                     if (self.peekNext() == '/') {
                         while (self.peek() != '\n' and !self.isAtEnd()) _ = self.advance();
+                    } else {
+                        return;
                     }
                 },
                 else => return,
@@ -150,8 +154,8 @@ pub const Scanner = struct {
         if (eql(u8, lexeme, "extern")) return .EXTERN;
         if (eql(u8, lexeme, "struct")) return .STRUCT;
         if (eql(u8, lexeme, "inline")) return .INLINE;
+        if (eql(u8, lexeme, "import")) return .IMPORT;
         if (eql(u8, lexeme, "const")) return .CONST;
-        if (eql(u8, lexeme, "clone")) return .CLONE;
         if (eql(u8, lexeme, "while")) return .WHILE;
         if (eql(u8, lexeme, "proc")) return .PROC;
         if (eql(u8, lexeme, "prop")) return .PROP;
@@ -171,6 +175,7 @@ pub const Scanner = struct {
     fn makeToken(self: *Self, ty: TokenType) Token {
         return Token{
             .line = self.line,
+            .col = self.col,
             .kind = ty,
             .lexeme = self.currentLexeme(),
         };
@@ -187,6 +192,7 @@ pub const Scanner = struct {
     pub const Token = struct {
         lexeme: []const u8,
         line: usize,
+        col: usize,
         kind: TokenType,
 
         pub fn format(
@@ -198,7 +204,7 @@ pub const Scanner = struct {
             _ = options;
             _ = fmt;
 
-            try writer.print("{s}: {s} @ {}", .{ @tagName(self.kind), self.lexeme, self.line });
+            try writer.print("{s}: {s} @ {}:{}", .{ @tagName(self.kind), self.lexeme, self.line, self.col });
         }
     };
 
@@ -239,7 +245,7 @@ pub const Scanner = struct {
         EXTERN,
         INLINE,
         STRUCT,
-        CLONE,
+        IMPORT,
         CONST,
         WHILE,
         PROC,

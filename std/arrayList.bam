@@ -1,0 +1,104 @@
+def ArrayList: proc T -> CTIME {
+    def ArrayListImpl: struct {
+        def items: prop *T;
+        def len: prop i32;
+        def capacity: prop i32;
+
+        def init: proc -> ArrayListImpl {
+            def result: var ArrayListImpl;
+
+            result.items = null;
+            result.len = 0;
+            result.capacity = 0;
+
+            return *result;
+        };
+    
+        def deinit: proc self -> i32 {
+            std.mem.Allocator.free(*self.items);
+
+            return 0;
+        };
+
+        def ensureTotalCapacity: proc self capacity -> i32 {
+            if (*self.capacity > capacity - 1) { return 0; };
+
+            def betterCapacity: var i32;
+            betterCapacity = capacity + ((capacity / 2) + 8);
+            while (*betterCapacity < capacity) {
+                betterCapacity = *betterCapacity + ((*betterCapacity / 2) + 8);
+            };
+
+            self.items = std.mem.Allocator.realloc(*self.items, *betterCapacity * T.SIZE);
+            self.capacity = *betterCapacity;
+
+            return 0;
+        };
+
+        def addOne: proc self -> *T {
+            ArrayListImpl.ensureTotalCapacity(self, *self.len + 1);
+
+            return ArrayListImpl.addOneAssumeCapacity(self);
+        };
+
+        def addOneAssumeCapacity: proc self -> *T {
+            self.len = *self.len + 1;
+            return (*self.items + T.SIZE * *self.len);
+        };
+
+        def append: proc self item -> i32 {
+            def newItemPtr: const ArrayListImpl.addOne(self);
+
+            newItemPtr = item;
+
+            return 0;
+        };
+
+
+        def clearAndFree: proc self -> i32 {
+            std.mem.Allocator.free(*self.items);
+            self.len = 0;
+            self.capacity = 0;
+
+            return 0;
+        };
+
+        def pop: proc self -> T {
+            def val: const *(*self.items + T.SIZE * (*self.len - 1));
+            self.len = *self.len - 1;
+
+            return val;
+        };
+
+        def orderedRemove: proc self index -> T {
+            def newlen: const *self.len - 1;
+            if (newlen == index) { return self.pop(); };
+
+            def oldItem: const *(*self.items + T.SIZE * index);
+            def i: var i32;
+            i = index;
+
+            while (*i < newlen) {
+                *self.items + (T.SIZE * *i) = *(*self.items + (T.SIZE * (*i + 1)));
+
+                i = *i + 1;
+            };
+
+            self.len = newlen;
+
+            return oldItem;
+        };
+
+        def insert: proc self index item -> i32 {
+            ArrayListImpl.ensureTotalCapacity(self, *self.len + 1);
+            self.len = *self.len + 1;
+
+            std.mem.memmove(*self.items + index * T.SIZE + 1, *self.items + index * T.SIZE, T.SIZE * (*self.len - index - 1));
+            *self.items + index * T.SIZE = item;
+
+            return 0;
+        };
+    };
+
+    return ArrayListImpl;
+};

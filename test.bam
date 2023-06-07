@@ -1,15 +1,53 @@
+def std: import "std/std.bam";
+
 def printf: extern -> i32;
 
-def run: proc callback -> i32 {
-  return callback();
-};
-
 def main: proc -> i32 {
-  def cb: proc -> i32 {
-    return 10;
+  def HM: const std.HashMap(u8, i32);
+  def map: var HM;
+
+  map = HM.init(10);
+
+  def i: var i32;
+  i = 'A';
+
+  while (*i < 'z' + 1) {
+    map.put(i, i32(*i - 'A'));
+
+    i = *i + 1;
   };
-  
-  printf("%d", run(cb));
+
+  map.deinit();
+
+  def al: var std.ArrayList(i32);
+  al = std.ArrayList(i32).init();
+
+  def i: var i32;
+  i = 0;
+  while (*i < 2000000) {
+    al.append(*i);
+
+    i = *i + 1;
+  };
+
+  printf("%d %d\n", *al.len, *al.capacity);
+
+  al.deinit();
+
+  def ab: var std.ArrayList(i64);
+  ab = std.ArrayList(i64).init();
+
+  def i: var i64;
+  i = 0;
+  while (*i < 2000000) {
+    ab.append(*i);
+
+    i = *i + 1;
+  };
+
+  printf("%d %d\n", *ab.len, *ab.capacity);
+
+  ab.deinit();
 
   return 0;
 };

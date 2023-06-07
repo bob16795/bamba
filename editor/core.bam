@@ -1,0 +1,1021 @@
+def Buffer: import "editor/buffer.bam";
+
+def Settings: struct {
+    def TABSIZE: const 2;
+    def NUMBERLEN: const 4;
+};
+
+def buffers: prop std.ArrayList(Buffer);
+def currentBuffer: prop u32;
+def rows: prop u32;
+def cols: prop u32;
+
+def defaultCallback: proc a b c -> i32 { return 0; };
+
+def getBuffer: proc self -> *Buffer {
+    return *self.buffers.items + (Buffer.SIZE * *self.currentBuffer);
+};
+
+def Terminal: struct {
+    def termios: struct {
+        def iflag: prop u32;
+        def oflag: prop u32;
+        def cflag: prop u32;
+        def lflag: prop u32;
+        def line: prop u8;
+        def cc: prop u8[32];
+        def ispeed: prop u32;
+        def ospeed: prop u32;
+    };
+
+    def winsize: struct {
+        def row: prop u16;
+        def col: prop u16;
+        def xpixel: prop u16;
+        def ypixel: prop u16;
+    };
+
+    def getSize: proc x y -> i32 {
+        def ws: var winsize;
+
+        Externs.ioctl(0, 21523, ws);
+        x = 0;
+        y = 0;
+
+        x = *ws.row;
+        y = *ws.col;
+
+        return 0;
+    };
+
+    def startTermios: var termios;
+
+    def tcgetattr: extern file addr -> i32;
+    def tcsetattr: extern mode file addr -> i32;
+
+    def enableRawMode: proc -> i32 {
+        tcgetattr(0, startTermios);
+
+        def raw: var termios;
+        raw = *startTermios;
+
+        raw.iflag = *raw.iflag & ~(2 | 256 | 16 | 32 | 1024);
+        raw.oflag = *raw.oflag & ~(1);
+        raw.cflag = *raw.cflag | (48);
+        raw.lflag = *raw.lflag & ~(8 | 2 | 32768 | 1);
+
+        raw.cc[6] = i8(0);
+        raw.cc[5] = i8(1);
+
+        tcsetattr(0, 2, raw);
+
+        return 0;
+    };
+
+    def disableRawMode: proc -> i32 {
+        tcsetattr(0, 2, startTermios);
+
+        return 0;
+    };
+
+    def die: proc -> i32 {
+        write(1, "\e[2J", 4);
+        write(1, "\e[H", 3);
+
+        perror(0);
+        Externs.exit(0);
+
+        return 0;
+    };
+};
+
+def Input: struct {
+    def Key: struct {
+        def value: prop u32;
+
+        def BACKSPACE: const 127;
+
+        def ARROWUP: const 1000;
+        def ARROWDOWN: const 1001;
+        def ARROWLEFT: const 1002;
+        def ARROWRIGHT: const 1003;
+        def PAGEUP: const 1004;
+        def PAGEDOWN: const 1005;
+        def DELETE: const 1006;
+
+        def CTRL: inline key -> i32 {
+            return key & 31;
+        };
+    };
+
+    def readKey: proc -> Key {
+        def c: var Key;
+
+        c.value = 0;
+
+        while (Externs.read(0, c.value, 1) != 1) {};
+
+        if (*c.value == '\e') {
+            def seq: var u8[3];
+
+            if (Externs.read(0, seq[0], 1) != 1) {
+               return *c;
+            };
+            if (Externs.read(0, seq[1], 1) != 1) {
+               return *c;
+            };
+
+            if (*seq[0] == '[') {
+                if ((*seq[1] > ('0' - 1)) & (*seq[1] < ('9' + 1))) {
+                    if (Externs.read(0, seq[2], 1) != 1) {
+                        return *c;
+                    };
+                    if (*seq[2] == '~') {
+                        if (*seq[1] == '3') { c.value = Key.DELETE; };
+                        if (*seq[1] == '5') { c.value = Key.PAGEUP; };
+                        if (*seq[1] == '6') { c.value = Key.PAGEDOWN; };
+                    };
+                } else {
+                    if (*seq[1] == 'A') { c.value = Key.ARROWUP; };
+                    if (*seq[1] == 'B') { c.value = Key.ARROWDOWN; };
+                    if (*seq[1] == 'C') { c.value = Key.ARROWLEFT; };
+                    if (*seq[1] == 'D') { c.value = Key.ARROWRIGHT; };
+                    if (*seq[1] == 'P') { c.value = Key.DELETE; };
+                };
+            };
+        };
+
+        return *c;
+    };
+
+    def processKey: proc self -> i32 {
+        def c: var Key;
+        def buffer: const Editor.getBuffer(self);
+
+        c = Input.readKey();
+
+        if (*c.value == Key.CTRL('q')) {
+            Externs.write(1, "\e[2J", 4);
+            Externs.write(1, "\e[H", 3);
+
+            Terminal.disableRawMode();
+
+            Externs.exit(0);
+        };
+
+        def processed: var u1;
+        processed = 0;
+
+        processed = *processed | moveCursor(self, c);
+
+        if (*c.value == Key.CTRL('o')) {
+            Editor.File.open(self, null);
+
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('s')) {
+            Editor.File.save(self, *buffer.fileName);
+
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('a')) {
+            if (*self.currentBuffer != 0) {
+                self.currentBuffer = *self.currentBuffer - 1;
+            };
+
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('d')) {
+            if (*self.currentBuffer != *self.buffers.len - 1) {
+                self.currentBuffer = *self.currentBuffer + 1;
+            };
+
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('b')) {
+            newBuffer(self);
+
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('f')) {
+            Editor.Search.find(self);
+
+            processed = 1;
+        };
+
+        if (*c.value == '\r') {
+            insertNewline(self);
+
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('E')) {
+            def subKey: var Key;
+            subKey.value = Key.ARROWDOWN;
+
+            moveCursor(self, subKey);
+            processed = 1;
+        };
+
+        if (*c.value == Key.CTRL('Y')) {
+            def subKey: var Key;
+            subKey.value = Key.ARROWUP;
+
+            moveCursor(self, subKey);
+            processed = 1;
+        };
+
+        if ((*c.value == Key.BACKSPACE) |
+            (*c.value == Key.CTRL('h')) |
+            (*c.value == Key.DELETE)) {
+            if (*c.value == Key.DELETE) {
+                def subKey: var Key;
+                subKey.value = Key.ARROWLEFT;
+
+                moveCursor(self, subKey);
+            };
+
+            scroll(self);
+
+            deleteChar(self);
+
+            processed = 1;
+        };
+
+        processed = *processed | u1(Externs.iscntrl(*c.value));
+        processed = *processed | ((*c.value) > 127 | *c.value == '\e');
+
+        if (~(*processed)) {
+            insertChar(self, c);
+        };
+
+        return 0;
+    };
+
+    def newBuffer: proc self -> i32 {
+        self.buffers.append(Editor.Buffer.init());
+        self.currentBuffer = *self.buffers.len - 1;
+
+        return 0;
+    };
+
+    def scroll: proc self -> u32 {
+        def buffer: const Editor.getBuffer(self);
+
+        buffer.rx = 0;
+        def current: const Editor.Buffer.getRow(buffer, *buffer.cy);
+        if (current != null) {
+            buffer.rx = Editor.Buffer.cxToRx(current, *buffer.cx);
+        };
+
+        if (*buffer.cy < *buffer.rowoff) {
+            buffer.rowoff = *buffer.cy;
+        };
+        if (*buffer.cy + 1 > *buffer.rowoff + *self.rows) {
+            buffer.rowoff = *buffer.cy - *self.rows + 1;
+        };
+        if (*buffer.rx < *buffer.coloff) {
+            buffer.coloff = *buffer.rx;
+        };
+        if (*buffer.rx + 1 > *buffer.coloff + *self.cols) {
+            buffer.coloff = *buffer.rx - *self.cols + 1;
+        };
+
+        return 0;
+    };
+
+    def moveCursor: proc self key -> u1 {
+        def buffer: const Editor.getBuffer(self);
+        def current: const Editor.Buffer.getRow(buffer, *buffer.cy);
+        def result: var u1;
+
+        result = 0;
+
+        if (*key.value == Key.ARROWRIGHT) {
+            result = 1;
+            if (*buffer.cx != 0) {
+               buffer.cx = *buffer.cx - 1;
+            } else {
+                if (*buffer.cy > 0) {
+                    buffer.cy = *buffer.cy - 1;
+                    buffer.cx = *Editor.Buffer.getRow(buffer, *buffer.cy).size;
+                };
+            };
+        };
+        if (*key.value == Key.ARROWLEFT) {
+            result = 1;
+            if (current != null) {
+                if (*buffer.cx < *current.size) {
+                    buffer.cx = *buffer.cx + 1;
+                } else {
+                    buffer.cy = *buffer.cy + 1;
+                    buffer.cx = 0;
+                };
+            };
+        };
+        if (*key.value == Key.ARROWUP) {
+            result = 1;
+            if (*buffer.cy != 0) {
+                buffer.cy = *buffer.cy - 1;
+            };
+        };
+        if (*key.value == Key.ARROWDOWN) {
+            result = 1;
+            if (*buffer.cy != *buffer.rows.len - 1 & *buffer.rows.len != 0) {
+                buffer.cy = *buffer.cy + 1;
+            };
+        };
+
+        if (*key.value == Key.PAGEUP | *key.value == Key.PAGEDOWN) {
+            result = 1;
+            def idx: var i16;
+            def subKey: var Key;
+            idx = *self.rows;
+
+            if (*key.value == Key.PAGEUP) {
+                buffer.cy = *buffer.rowoff;
+            } else {
+                buffer.cy = *buffer.rowoff + *self.rows - 1;
+                if (*buffer.cy > *buffer.rows.len) {
+                    buffer.cy = *buffer.rows.len;
+                };
+            };
+
+            subKey.value = Key.ARROWUP;
+            if (*key.value == Key.PAGEDOWN) {
+                subKey.value = Key.ARROWDOWN;
+            };
+
+            while (*idx != 0) {
+                moveCursor(self, subKey);
+                idx = *idx - 1;
+            };
+        };
+
+        def current: const Editor.Buffer.getRow(buffer, *buffer.cy);
+        def len: var i32;
+        len = 0;
+        if (current != null) {
+            len = *current.size;
+        };
+        if (*buffer.cx > *len) {
+            buffer.cx = *len;
+        };
+
+        return *result;
+    };
+
+    def insertChar: proc self c -> i32 {
+        def buffer: const Editor.getBuffer(self);
+
+        if (*buffer.cy == *buffer.rows.len) {
+            Editor.Buffer.insertRow(buffer, *buffer.rows.len, "", 0);
+        };
+
+        Editor.Buffer.ERow.insert(
+            buffer,
+            Editor.Buffer.getRow(buffer, *buffer.cy),
+            *buffer.cx,
+            c,
+            buffer.syntax
+        );
+
+        buffer.cx = *buffer.cx + 1;
+        buffer.dirty = 1;
+
+        return 0;
+    };
+
+    def insertNewline: proc self -> i32 {
+        def buffer: const Editor.getBuffer(self);
+
+        if (*buffer.cx == 0) {
+            Editor.Buffer.insertRow(buffer, *buffer.cy, "", 0);
+        } else {
+            def row: const Editor.Buffer.getRow(buffer, *buffer.cy);
+
+            Editor.Buffer.insertRow(buffer, *buffer.cy + 1, (*row.chars + *buffer.cx), *row.size - *buffer.cx);
+
+            def current: const Editor.Buffer.getRow(buffer, *buffer.cy);
+            current.size = *buffer.cx;
+            (*current.chars) + (*current.size) = 0;
+            Editor.Buffer.ERow.update(buffer, current, buffer.syntax);
+        };
+        buffer.cy = *buffer.cy + 1;
+        buffer.cx = 0;
+
+        return 0;
+    };
+
+    def deleteChar: proc self -> i32 {
+        def buffer: const Editor.getBuffer(self);
+
+        if (*buffer.cy == *buffer.rows.len) {
+            return 0;
+        };
+        if (*buffer.cy == 0 & *buffer.cx == 0) {
+            return 0;
+        };
+
+        def current: const Editor.Buffer.getRow(buffer, *buffer.cy);
+        if (*buffer.cx > 0) {
+            Editor.Buffer.ERow.delete(buffer, current, (*buffer.cx) - 1, buffer.syntax);
+            buffer.cx = *buffer.cx - 1;
+        } else {
+            def prev: const Editor.Buffer.getRow(buffer, *buffer.cy - 1);
+            buffer.cx = *prev.size;
+            Editor.Buffer.ERow.append(buffer, prev, *current.chars, *current.size, buffer.syntax);
+            Editor.Buffer.deleteRow(buffer, *buffer.cy);
+            buffer.cy = *buffer.cy - 1;
+        };
+
+        return 0;
+    };
+};
+
+def Display: struct {
+    def StatusBar: struct {
+        def msg: prop u8[80];
+        def msglen: prop u32;
+        def msgTime: prop Externs.TIME;
+
+        def showMessage: proc self base msg -> i32 {
+            self.msglen = Externs.snprintf(self.msg, 80, base, msg);
+
+            self.msgTime = 0;
+            self.msgTime = Externs.time(0);
+
+            return 0;
+        };
+
+        def render: proc self ed buff -> i32 {
+            def buffer: const Editor.getBuffer(ed);
+
+            Editor.Display.abuf.append(buff, "\e[7m", 4);
+            def status: var u8[80];
+            def rstatus: var u8[80];
+            def len: var u32;
+            def rlen: var u32;
+            def name: var *u8;
+
+            name = *buffer.syntax.name;
+            if (*buffer.syntax.name == null) {
+               name = "no ft";
+            };
+
+            rlen = Externs.snprintf(rstatus, 80, "%s | %d/%d", *name, *buffer.cy + 1, *buffer.rows.len);
+
+            def dirty: var *u8;
+            dirty = "";
+            if (*buffer.dirty) {
+               dirty = "(modified)";
+            };
+            def filename: var *u8;
+            filename = "[No Name]";
+            if (*buffer.fileName != null) {
+               def name: const Externs.strrchr(*buffer.fileName, '/');
+               if (name == null) {
+                   filename = *buffer.fileName;
+               } else {
+                   filename = name + u32(1);
+               };
+            };
+
+            def total: var i32;
+            total = 0;
+
+            def bufIdx: var i32;
+            bufIdx = 0;
+
+            while (*bufIdx < *ed.buffers.len) {
+                len = Externs.snprintf(status, 80, "%d", *bufIdx);
+                total = *total + *len + 2;
+
+                if (*bufIdx == *ed.currentBuffer) {
+                    Editor.Display.abuf.append(buff, "[", *len);
+                } else {
+                    Editor.Display.abuf.append(buff, " ", *len);
+                };
+                Editor.Display.abuf.append(buff, status, *len);
+                if (*bufIdx == *ed.currentBuffer) {
+                    Editor.Display.abuf.append(buff, "]", *len);
+                } else {
+                    Editor.Display.abuf.append(buff, " ", *len);
+                };
+
+                bufIdx = *bufIdx + 1;
+            };
+
+            len = Externs.snprintf(status, 80, "| %.20s %s", *filename, *dirty);
+
+            if (*len > *ed.cols - *total) {
+                len = *ed.cols - *total;
+            };
+
+            total = *total + *len;
+
+            Editor.Display.abuf.append(buff, status, *len);
+
+            def target: const *ed.cols + Editor.Settings.NUMBERLEN;
+
+            while (*total < target) {
+                if (target - *len == *rlen) {
+                    Editor.Display.abuf.append(buff, rstatus, *rlen);
+                    total = *total + *rlen;
+                } else {
+                    Editor.Display.abuf.append(buff, " ", 1);
+                    total = *total + 1;
+                };
+            };
+
+            Editor.Display.abuf.append(buff, "\e[m\r\n", 5);
+
+            // message bar
+
+            Editor.Display.abuf.append(buff, "\e[K", 3);
+            def len: var i32;
+
+            len = *self.msglen;
+
+            if (*len > *ed.cols) {
+                len = *ed.cols;
+            };
+
+            if ((*len != 0) & (Externs.time(0) - (*self.msgTime) < 1)) {
+               Editor.Display.abuf.append(buff, self.msg, *len);
+            };
+
+            return 0;
+        };
+
+        def prompt: inline ed msg callback -> *u8 {
+            def bufsize: var u32;
+            def buflen: var u32;
+            def buf: var *u8;
+
+            bufsize = 128;
+            buf = Externs.malloc(*bufsize);
+
+            *buf = 0;
+            buflen = 0;
+
+            while (1) {
+                showMessage(ed.statusBar, msg, *buf);
+                Editor.Display.render(ed);
+
+                def c: var Editor.Input.Key;
+                c = Editor.Input.readKey();
+
+                if (*c.value == '\e') {
+                    showMessage(ed.statusBar, "%s", "");
+                    callback(ed, *buf, c);
+
+                    Externs.free(*buf);
+                    buf = null;
+                    return *buf;
+                };
+
+                if (*c.value == 127) {
+                   buflen = *buflen - 1;
+                   (*buf + (*buflen)) = 0;
+                } else {
+                    if (*c.value == '\r') {
+                        if (*buflen != 0) {
+                            showMessage(ed.statusBar, "%s", "");
+                            callback(ed, *buf, c);
+
+                            return *buf;
+                        };
+                    } else {
+                        if (~Externs.iscntrl(*c.value) & *c.value < 128) {
+                            if (*buflen == *bufsize - 1) {
+                                bufsize = *bufsize * 2;
+                                buf = Externs.realloc(*buf, *bufsize);
+                            };
+                            (*buf + (*buflen)) = u8(*c.value);
+                            buflen = *buflen + 1;
+                            (*buf + (*buflen)) = 0;
+                        };
+                    };
+                };
+
+                callback(ed, *buf, c);
+            };
+
+            return null;
+        };
+    };
+
+    def abuf: struct {
+        def b: prop *u8;
+        def len: prop u32;
+
+        def append: proc self s len -> u32 {
+            self.b = Externs.realloc(*self.b, *self.len + len);
+
+            Externs.memcpy((*self.b)[*self.len], s, len);
+            self.len = *self.len + len;
+
+            return 0;
+        };
+
+        def deinit: proc self -> u32 {
+            Externs.free(*self.b);
+
+            return 0;
+        };
+    };
+
+    def drawRows: proc self buff -> u32 {
+        def y: var u32;
+
+        y = 0;
+        
+        def buffer: const Editor.getBuffer(self);
+
+        while (*y < *self.rows) {
+            def filerow: const *y + *buffer.rowoff;
+
+            if (filerow > *buffer.rows.len - 1) {
+                def clen: var u8;
+                clen = 0;
+                while (*clen < Editor.Settings.NUMBERLEN - 1) {
+                    abuf.append(buff, " ", 1);
+                    clen = *clen + 1;
+                };
+                abuf.append(buff, "~", 1);
+                abuf.append(buff, "│", 3);
+            } else {
+                def numBuff: var u8[Editor.Settings.NUMBERLEN + 1];
+                
+                def clen: var u8;
+                clen = Externs.snprintf(numBuff, Editor.Settings.NUMBERLEN + 1, "%d", filerow);
+                def startlen: const *clen;
+                while (*clen < Editor.Settings.NUMBERLEN) {
+                    abuf.append(buff, " ", 1);
+                    clen = *clen + 1;
+                };
+
+                abuf.append(buff, numBuff, startlen);
+                abuf.append(buff, "│", 3);
+                
+                def len: var i32;
+                def current: const Editor.Buffer.getRow(buffer, filerow);
+                if (*current.rsize < *buffer.coloff) {
+                    len = 0;
+                } else {
+                    len = *current.rsize - *buffer.coloff;
+                };
+
+                if (*len > *self.cols) {
+                    len = *self.cols;
+                };
+
+                def currentColor: var i32;
+                currentColor = 0 - 1;
+
+                if (*len != 0) {
+                    def j: var i32;
+                    def c: const (*current.render) + *buffer.coloff;
+                    def hl: const (*current.hl) + *buffer.coloff;
+
+                    j = 0;
+                    while (*j < *len) {
+                        def char: const *(c + *j);
+                        def charhl: const *(hl + *j);
+
+                        if (Externs.iscntrl(char) != 0) {
+                            def sym: var u8;
+                            sym = '?';
+                            if (char < 26) {
+                                sym = char + '@';
+                            };
+                            abuf.append(buff, "\e[7m", 4);
+                            abuf.append(buff, sym, 1);
+                            abuf.append(buff, "\e[m", 3);
+                            if (*currentColor != 0 - 1) {
+                                def buf: var i8[16];
+                                def clen: const Externs.snprintf(buf, 16, "\e[%dm", *currentColor);
+                                abuf.append(buff, buf, clen);
+                            };
+                        } else {
+                            if (charhl == Editor.Buffer.ERow.Highlight.NORMAL) {
+                                if (*currentColor != 0 - 1) {
+                                    abuf.append(buff, "\e[39m", 5);
+                                    currentColor = 0 - 1;
+                                };
+                                abuf.append(buff, (c + *j), 1);
+                            } else {
+                                def color: const Editor.Buffer.ERow.Highlight.toColor(charhl);
+                                if (*currentColor != color) {
+                                    def buf: var i8[16];
+                                    def clen: const Externs.snprintf(buf, 16, "\e[%dm", color);
+                                    abuf.append(buff, buf, clen);
+                                    currentColor = color;
+                                };
+                                abuf.append(buff, (c + *j), 1);
+                            };
+                        };
+
+                        j = *j + 1;
+                    };
+                    abuf.append(buff, "\e[39m", 5);
+                };
+            };
+
+            abuf.append(buff, "\e[K", 3);
+            abuf.append(buff, "\r\n", 2);
+
+            y = *y + 1;
+        };
+
+        return 0;
+    };
+
+    def render: proc self -> u32 {
+        Editor.Input.scroll(self);
+
+        def buff: var abuf;
+        def buffer: const Editor.getBuffer(self);
+
+        buff.b = null;
+        buff.len = 0;
+
+        abuf.append(buff, "\e[?25l", 6);
+        abuf.append(buff, "\e[H", 3);
+        Display.drawRows(self, buff);
+        Display.StatusBar.render(self.statusBar, self, buff);
+
+        def tmpBuf: var u8[32];
+
+        Externs.snprintf(tmpBuf, 32, "\e[%d;%dH", (*buffer.cy - *buffer.rowoff) + 1,
+            (*buffer.rx - *buffer.coloff) + 1 + Editor.Settings.NUMBERLEN + 1);
+        abuf.append(buff, tmpBuf, Externs.strlen(tmpBuf));
+
+        abuf.append(buff, "\e[?25h", 6);
+
+        Externs.write(1, *buff.b, *buff.len);
+        abuf.deinit(buff);
+
+        return 0;
+    };
+};
+
+def statusBar: prop Display.StatusBar;
+
+def Search: struct {
+    def lastmatch: var i32;
+    def direction: var i8;
+    def savedhlline: var i32;
+    def savedhl: var *i8;
+
+    def findCB: proc self query key -> i32 {
+        def buffer: const Editor.getBuffer(self);
+        
+        if (*savedhl != null) {
+            def row: const Editor.Buffer.getRow(buffer, *savedhlline);
+            Externs.memcpy(*row.hl, *savedhl, *row.rsize);
+            Externs.free(*savedhl);
+            savedhl = null;
+        };
+
+        direction = 2;
+
+        if (*key.value == '\r' | *key.value == '\e') {
+            lastmatch = 0 - 1;
+            direction = 1;
+            return 0;
+        };
+
+        if (*key.value == Editor.Input.Key.ARROWDOWN) {
+            direction = 1;
+        };
+
+        if (*key.value == Editor.Input.Key.ARROWUP) {
+            direction = 0 - 1;
+        };
+
+        if (*direction == 2) {
+            lastmatch = 0 - 1;
+            direction = 1;
+        };
+
+        if (*lastmatch == 0 - 1) {
+            direction = 1;
+        };
+        def current: var i32;
+        def i: var i32;
+
+        current = *lastmatch;
+        i = 0;
+        while (*i < *buffer.rows.len) {
+            current = *current + i32(*direction);
+            if (*current == 0 - 1) {
+                current = *buffer.rows.len - 1;
+            } else {
+                if (*current == *buffer.rows.len) {
+                    current = 0;
+                };
+            };
+
+            def row: const Editor.Buffer.getRow(buffer, *current);
+            def match: const Externs.strstr(*row.render, query);
+            if (match != null) {
+                lastmatch = *current;
+                buffer.cy = *current;
+                buffer.cx = Editor.Buffer.rxToCx(row, i32(match - *row.render));
+                buffer.rowoff = *buffer.rows.len;
+
+                savedhlline = *current;
+                savedhl = Externs.malloc(*row.rsize);
+                Externs.memcpy(*savedhl, *row.hl, *row.rsize);
+
+                Externs.memset((*row.hl + i32(match - *row.render)), Editor.Buffer.ERow.Highlight.MATCH, Externs.strlen(query));
+                i = *buffer.rows.len;
+            };
+
+            i = *i + 1;
+        };
+
+        return 0;
+    };
+
+    def find: proc self -> i32 {
+        def buffer: const Editor.getBuffer(self);
+
+        def query: var *u8;
+        def savedCx: const *buffer.cx;
+        def savedCy: const *buffer.cy;
+        def savedColoff: const *buffer.coloff;
+        def savedRowoff: const *buffer.rowoff;
+
+        lastmatch = 0 - 1;
+        direction = 1;
+        savedhl = null;
+
+        query = Editor.Display.StatusBar.prompt(self, "Search: %s (Use ESC/Arrows/Enter)", findCB);
+
+        if (*query != null) {
+            Externs.free(*query);
+        } else {
+            buffer.cx = savedCx;
+            buffer.cy = savedCy;
+            buffer.coloff = savedColoff;
+            buffer.rowoff = savedRowoff;
+        };
+
+        return 0;
+    };
+};
+
+def File: struct {
+    def stripNonsense: proc line linelen -> i32 {
+        while (*(line + (*linelen - 1)) == '\n' |
+               *(line + (*linelen - 1)) == '\r') {
+            linelen = *linelen - 1;
+            if (*linelen == 0) {
+                return 0;
+            };
+        };
+
+        return 0;
+    };
+
+    def save: proc self afilename -> i32 {
+        def buffer: const Editor.getBuffer(self);
+        
+        def filename: var *u8;
+
+        if (afilename == null) {
+            filename = Editor.Display.StatusBar.prompt(self, "Save as: %s (ESC to cancel)", Editor.defaultCallback);
+            if (*filename == null) {
+                Editor.Display.StatusBar.showMessage(self.statusBar, "Save aborted %s", "");
+                return 0;
+            };
+        } else {
+            filename = afilename;
+        };
+
+        def len: var i32;
+        def buf: var *u8;
+
+        buf = Editor.Buffer.toString(buffer, len);
+        def fp: var *Externs.FILE;
+
+        fp = Externs.fopen(*filename, "wb+");
+        Externs.fwrite(*buf, *len, 1, *fp);
+        Externs.fclose(*fp);
+
+        Editor.Display.StatusBar.showMessage(self.statusBar, "%d Bytes Written To Disk", *len);
+
+        buffer.dirty = 0;
+        buffer.fileName = *filename;
+
+        return 0;
+    };
+
+    def open: proc self afilename -> i32 {
+        def buffer: const Editor.getBuffer(self);
+
+        def filename: var *u8;
+
+        if (afilename == null) {
+            filename = Editor.Display.StatusBar.prompt(self, "Open file: %s (ESC to cancel)", Editor.defaultCallback);
+            if (*filename == null) {
+                Editor.Display.StatusBar.showMessage(self.statusBar, "Open aborted %s", "");
+                return 0;
+            };
+        } else {
+            filename = afilename;
+        };
+
+        Externs.free(*buffer.fileName);
+        buffer.fileName = Externs.strdup(*filename);
+
+        Editor.Buffer.selectSyntax(buffer, *buffer.fileName);
+
+        def fp: var *Externs.FILE;
+
+        fp = Externs.fopen(*filename, "r");
+
+        def line: var *u8;
+        def idx: var i32;
+        def linecap: var i32;
+        def linelen: var i32;
+
+        line = null;
+        linecap = 0;
+        linelen = Externs.getline(line, linecap, *fp);
+        idx = 0;
+
+        while (*linelen > 0) {
+            stripNonsense(*line, linelen);
+
+            idx = *idx + 1;
+
+            Editor.Buffer.insertRow(buffer, *buffer.rows.len, *line, *linelen);
+
+            Externs.free(*line);
+            linecap = 0;
+            line = null;
+            linelen = Externs.getline(line, linecap, *fp);
+        };
+
+        Externs.fclose(*fp);
+        Externs.free(*line);
+
+        buffer.dirty = 0;
+
+        return 0;
+    };
+};
+
+def doResize: proc dummy -> i32 {
+    def self: const *edPtr;
+
+    Terminal.getSize(self.rows, self.cols);
+    self.rows = *self.rows - 2;
+    self.cols = *self.cols - Editor.Settings.NUMBERLEN - 1;
+
+    Display.render(self);
+
+    return 0;
+};
+
+def init: proc -> Editor {
+    def result: var Editor;
+
+    result.statusBar.msg[0] = 0;
+    result.statusBar.msgTime = 0;
+    result.buffers = std.ArrayList(Buffer).init();
+    result.buffers.append(Buffer.init());
+    result.currentBuffer = 0;
+
+    edPtr = result;
+
+    doResize(0);
+
+    return *result;
+};
+
+def run: proc self -> i32 {
+    def c: var u8;
+    def count: var i64;
+
+    Terminal.enableRawMode();
+    Externs.setupSignals();
+
+    while (1) {
+        Display.render(self);
+        Input.processKey(self);
+    };
+
+    Terminal.disableRawMode();
+
+    return 0;
+};

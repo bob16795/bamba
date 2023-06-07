@@ -8,6 +8,7 @@ pub const interpreterError = error{
     InvalidFunc,
     InvalidCast,
     InvalidProp,
+    InvalidStatement,
     Undefined,
     Unimplemented,
     BadIndex,
@@ -25,6 +26,7 @@ pub const Interpreter = struct {
         Type,
         Prop,
         Struct,
+        ValProc,
         Proc,
     };
 
@@ -64,18 +66,24 @@ pub const Interpreter = struct {
             value: *llvm.Type,
             subDefs: DefList,
         },
+        ValProc: struct {
+            val: *Value,
+            proc: *Value,
+        },
         Proc: struct {
             parentDefs: *DefList,
             def: parser.Definition,
             impls: std.ArrayList(ProcImpl),
             ext: bool,
             inl: bool,
+            ctime: bool,
         },
 
         pub fn sameAs(self: *const Value, other: *const Value) bool {
             if (@enumToInt(self.*) != @enumToInt(other.*)) return false;
 
             switch (self.*) {
+                .ValProc => return false,
                 .Val => return false,
                 .Prop => return false,
                 .Proc => return false,
@@ -94,6 +102,7 @@ pub const Interpreter = struct {
         pub fn getValue(self: Value, targetType: *llvm.Type) !*llvm.Value {
             return switch (self) {
                 .Val => return self.Val.value,
+                .ValProc => return try self.ValProc.val.getValue(targetType),
                 .Null => return targetType.constNull(),
                 .ConstInt => {
                     return llvm.Type.constInt(targetType, self.ConstInt.value, .False);
@@ -120,6 +129,7 @@ pub const Interpreter = struct {
 
         out: ?*llvm.Value,
         outBlock: ?*llvm.BasicBlock,
+        ctime: ?*Value,
     };
 
     context: *llvm.Context,
@@ -132,33 +142,44 @@ pub const Interpreter = struct {
 
     root: parser.Definition,
 
-    pub fn visitStatement(self: *Self, stmt: parser.Statement, func: *FunctionData, defs: *DefList) interpreterError!void {
+    pub fn visitStatement(self: *Self, stmt: parser.Statement, func: ?*FunctionData, defs: *DefList) interpreterError!void {
         switch (stmt.data) {
             .Definition => |data| {
-                try self.visitDefinition(defs, null, data, false);
+                try self.visitDefinition(func, defs, null, data, false);
             },
             .Expression => |data| {
                 _ = try self.visitExpression(func, data, defs);
             },
             .Return => |data| {
-                if (func.out != null) {
-                    var returns = try self.visitExpression(func, data, defs);
-                    _ = self.builder.buildStore(try returns.getValue(try func.retKind.?.getTypeVal()), func.out.?);
+                if (func == null) return error.InvalidStatement;
 
-                    _ = self.builder.buildBr(func.outBlock.?);
+                if (func.?.ctime) |ctime| {
+                    var returns = try self.visitExpression(func, data, defs);
+                    ctime.* = returns.*;
+
+                    return;
+                }
+
+                if (func.?.out != null) {
+                    var returns = try self.visitExpression(func.?, data, defs);
+                    _ = self.builder.buildStore(try returns.getValue(try func.?.retKind.?.getTypeVal()), func.?.out.?);
+
+                    _ = self.builder.buildBr(func.?.outBlock.?);
 
                     return;
                 }
 
                 var returns = try self.visitExpression(func, data, defs);
-                _ = self.builder.buildRet(try returns.getValue(try func.retKind.?.getTypeVal()));
+                _ = self.builder.buildRet(try returns.getValue(try func.?.retKind.?.getTypeVal()));
 
                 return;
             },
             .While => |data| {
-                var headBB = self.context.appendBasicBlock(func.value.?, "whileHead");
-                var bodyBB = self.context.appendBasicBlock(func.value.?, "whileBody");
-                var mergeBB = self.context.appendBasicBlock(func.value.?, "whileMerge");
+                if (func == null) return error.InvalidStatement;
+
+                var headBB = self.context.appendBasicBlock(func.?.value.?, "whileHead");
+                var bodyBB = self.context.appendBasicBlock(func.?.value.?, "whileBody");
+                var mergeBB = self.context.appendBasicBlock(func.?.value.?, "whileMerge");
 
                 _ = self.builder.buildBr(headBB);
                 self.builder.positionBuilderAtEnd(headBB);
@@ -178,14 +199,16 @@ pub const Interpreter = struct {
                 self.builder.positionBuilderAtEnd(mergeBB);
             },
             .If => |data| {
+                if (func == null) return error.InvalidStatement;
+
                 if (data.bodyElse) |bodyElse| {
                     var condV = try (try self.visitExpression(func, data.check, defs)).getValue(self.context.intType(1));
 
                     condV = self.builder.buildICmp(.NE, condV, llvm.Type.constInt(self.context.intType(1), 0, .False), "ifCond");
 
-                    var bodyBB = self.context.appendBasicBlock(func.value.?, "ifBody");
-                    var elseBB = self.context.appendBasicBlock(func.value.?, "ifElse");
-                    var mergeBB = self.context.appendBasicBlock(func.value.?, "ifMerge");
+                    var bodyBB = self.context.appendBasicBlock(func.?.value.?, "ifBody");
+                    var elseBB = self.context.appendBasicBlock(func.?.value.?, "ifElse");
+                    var mergeBB = self.context.appendBasicBlock(func.?.value.?, "ifMerge");
 
                     _ = self.builder.buildCondBr(condV, bodyBB, elseBB);
                     self.builder.positionBuilderAtEnd(bodyBB);
@@ -211,8 +234,8 @@ pub const Interpreter = struct {
 
                 condV = self.builder.buildICmp(.NE, condV, llvm.Type.constInt(self.context.intType(1), 0, .False), "ifcond");
 
-                var bodyBB = self.context.appendBasicBlock(func.value.?, "ifBody");
-                var mergeBB = self.context.appendBasicBlock(func.value.?, "ifMerge");
+                var bodyBB = self.context.appendBasicBlock(func.?.value.?, "ifBody");
+                var mergeBB = self.context.appendBasicBlock(func.?.value.?, "ifMerge");
 
                 _ = self.builder.buildCondBr(condV, bodyBB, mergeBB);
                 self.builder.positionBuilderAtEnd(bodyBB);
@@ -227,7 +250,7 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn visitExpression(self: *Self, func: *FunctionData, expr: parser.Expression, defs: *DefList) interpreterError!*Value {
+    pub fn visitExpression(self: *Self, func: ?*FunctionData, expr: parser.Expression, defs: *DefList) interpreterError!*Value {
         switch (expr.data) {
             .ConstInt => {
                 var result = try self.allocator.create(Value);
@@ -335,7 +358,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                std.log.info("{s}", .{data.name});
+                std.log.info("'{s}'", .{data.name});
 
                 return error.Undefined;
             },
@@ -364,10 +387,7 @@ pub const Interpreter = struct {
 
                             switch (result.*) {
                                 .Val => {
-                                    std.log.info("{s}", .{@tagName(result.Val.kind.*)});
                                     if (result.Val.kind.* != .Ptr) return error.BadIndex;
-
-                                    std.log.info("{s}", .{@tagName(result.Val.kind.Ptr.child.*)});
 
                                     switch (result.Val.kind.Ptr.child.*) {
                                         .Ptr => {
@@ -522,13 +542,22 @@ pub const Interpreter = struct {
                             return error.InvalidCast;
                         }
 
-                        var params = try self.allocator.alloc(*Value, data.values.len - 1);
-                        var paramTypes = try self.allocator.alloc(*Value, data.values.len - 1);
-                        var callParams = try self.allocator.alloc(*llvm.Value, data.values.len - 1);
+                        var paramCount = data.values.len - 1;
+                        var offset: usize = 1;
+
+                        if (function.* == .ValProc) {
+                            paramCount = paramCount + 1;
+                            offset = 0;
+                            function = function.ValProc.proc;
+                        }
+
+                        var params = try self.allocator.alloc(*Value, paramCount);
+                        var paramTypes = try self.allocator.alloc(*Value, paramCount);
+                        var callParams = try self.allocator.alloc(*llvm.Value, paramCount);
                         var idx: usize = 0;
 
                         for (params, paramTypes, 0..) |*param, *ptype, aidx| {
-                            param.* = try self.visitExpression(func, data.values[aidx + 1], defs);
+                            param.* = try self.visitExpression(func, data.values[aidx + offset], defs);
                             if (param.*.* == .ConstInt) {
                                 ptype.* = try self.allocator.create(Value);
                                 ptype.*.* = .{
@@ -536,8 +565,25 @@ pub const Interpreter = struct {
                                         .value = self.context.intType(32),
                                     },
                                 };
+                            } else if (param.*.* == .ValProc) {
+                                ptype.* = param.*.ValProc.val.Val.kind;
+                                param.* = param.*.ValProc.val;
                             } else if (param.*.* == .Val) {
                                 ptype.* = param.*.Val.kind;
+                            } else if (param.*.* == .Null) {
+                                ptype.* = try self.allocator.create(Value);
+                                ptype.*.* = .{
+                                    .Type = .{
+                                        .value = self.context.pointerType(0),
+                                    },
+                                };
+
+                                param.*.* = .{
+                                    .Val = .{
+                                        .value = self.context.pointerType(0).constNull(),
+                                        .kind = ptype.*,
+                                    },
+                                };
                             } else {
                                 continue;
                             }
@@ -550,6 +596,10 @@ pub const Interpreter = struct {
                         callParams.len = idx;
 
                         var functionData = try self.implement(func, function, function.Proc.def.name, params, function.Proc.parentDefs);
+
+                        if (functionData.ctime) |ctime| {
+                            return ctime;
+                        }
 
                         if (functionData.out) |out| {
                             var kindData = try self.allocator.create(Value);
@@ -640,6 +690,16 @@ pub const Interpreter = struct {
                         var b = try self.visitExpression(func, data.values[1], defs);
 
                         var result = try self.allocator.create(Value);
+
+                        if (a.* == .ConstInt and b.* == .ConstInt) {
+                            result.* = .{
+                                .ConstInt = .{
+                                    .value = a.ConstInt.value * b.ConstInt.value,
+                                },
+                            };
+
+                            return result;
+                        }
 
                         result.* = .{
                             .Val = .{
@@ -851,8 +911,6 @@ pub const Interpreter = struct {
                     .Access => {
                         var a = try self.visitExpression(func, data.values[0], defs);
 
-                        std.log.info("{s}", .{data.values[1].data.Ident.name});
-
                         if (std.mem.eql(u8, data.values[1].data.Ident.name, "SIZE")) {
                             var resulta = try self.allocator.create(Value);
 
@@ -889,36 +947,61 @@ pub const Interpreter = struct {
                                 return result;
                             }
 
+                            std.log.info("{s}", .{data.values[1].data.Ident.name});
+
                             return error.Undefined;
                         }
 
                         if (a.* == .Val) {
                             if (a.Val.kind.* != .Ptr) return error.Undefined;
 
-                            var prop = a.Val.kind.Ptr.child.Struct.subDefs.get(data.values[1].data.Ident.name).?.Prop;
+                            var def = a.Val.kind.Ptr.child.Struct.subDefs.get(data.values[1].data.Ident.name) orelse {
+                                std.log.info("{s}", .{data.values[1].data.Ident.name});
 
-                            var result = self.builder.buildStructGEP(a.Val.kind.Ptr.child.Struct.value, a.Val.value, @intCast(c_uint, prop.idx), try self.allocator.dupeZ(u8, data.values[1].data.Ident.name));
-
-                            var subV = try self.allocator.create(Value);
-
-                            subV.* = .{
-                                .Ptr = .{
-                                    .child = prop.kind,
-                                    .kind = self.context.pointerType(5),
-                                },
+                                return error.InvalidProp;
                             };
 
-                            var resulta = try self.allocator.create(Value);
+                            if (def.* == .Prop) {
+                                var prop = def.Prop;
 
-                            resulta.* = .{
-                                .Val = .{
-                                    .value = result,
-                                    .kind = subV,
-                                },
-                            };
+                                var result = self.builder.buildStructGEP(a.Val.kind.Ptr.child.Struct.value, a.Val.value, @intCast(c_uint, prop.idx), try self.allocator.dupeZ(u8, data.values[1].data.Ident.name));
 
-                            return resulta;
+                                var subV = try self.allocator.create(Value);
+
+                                subV.* = .{
+                                    .Ptr = .{
+                                        .child = prop.kind,
+                                        .kind = self.context.pointerType(5),
+                                    },
+                                };
+
+                                var resulta = try self.allocator.create(Value);
+
+                                resulta.* = .{
+                                    .Val = .{
+                                        .value = result,
+                                        .kind = subV,
+                                    },
+                                };
+
+                                return resulta;
+                            }
+
+                            if (def.* == .Proc) {
+                                var resulta = try self.allocator.create(Value);
+
+                                resulta.* = .{
+                                    .ValProc = .{
+                                        .val = a,
+                                        .proc = def,
+                                    },
+                                };
+
+                                return resulta;
+                            }
                         }
+
+                        std.log.info("{s}", .{data.values[1].data.Ident.name});
 
                         return error.InvalidProp;
                     },
@@ -935,12 +1018,12 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn visitDefinition(self: *Self, parent: *DefList, propIdx: ?*usize, def: parser.Definition, root: bool) interpreterError!void {
+    pub fn visitDefinition(self: *Self, func: ?*FunctionData, parent: *DefList, propIdx: ?*usize, def: parser.Definition, root: bool) interpreterError!void {
         var zname = try self.allocator.dupeZ(u8, def.name);
 
         switch (def.data) {
             .Var => |data| {
-                var kind = try self.visitExpression(undefined, data.kind, parent);
+                var kind = try self.visitExpression(func, data.kind, parent);
 
                 var kindType = try kind.getTypeVal();
 
@@ -977,7 +1060,7 @@ pub const Interpreter = struct {
                 return;
             },
             .Const => |data| {
-                var value = try self.visitExpression(undefined, data.value, parent);
+                var value = try self.visitExpression(func, data.value, parent);
 
                 try parent.put(def.name, value);
 
@@ -986,7 +1069,7 @@ pub const Interpreter = struct {
             .Prop => |data| {
                 if (propIdx == null) return error.InvalidProp;
 
-                var kind = try self.visitExpression(undefined, data.kind, parent);
+                var kind = try self.visitExpression(func, data.kind, parent);
 
                 var value = try self.allocator.create(Value);
 
@@ -1004,6 +1087,11 @@ pub const Interpreter = struct {
             },
             .Proc => {
                 var value = try self.allocator.create(Value);
+                var ctime = if (def.data.Proc.out.data == .Ident)
+                    std.mem.eql(u8, def.data.Proc.out.data.Ident.name, "CTIME")
+                else
+                    false;
+
                 value.* = .{
                     .Proc = .{
                         .parentDefs = parent,
@@ -1011,6 +1099,7 @@ pub const Interpreter = struct {
                         .impls = std.ArrayList(ProcImpl).init(self.allocator),
                         .ext = false,
                         .inl = def.data.Proc.inl,
+                        .ctime = ctime,
                     },
                 };
 
@@ -1031,15 +1120,21 @@ pub const Interpreter = struct {
 
                 var subDefs = &((parent.get(def.name) orelse unreachable).Struct.subDefs);
 
-                try subDefs.put(def.name, value);
+                var iter = parent.iterator();
+
+                while (iter.next()) |defin| {
+                    if (defin.value_ptr.*.* != .Prop) {
+                        try subDefs.put(defin.key_ptr.*, defin.value_ptr.*);
+                    }
+                }
 
                 var valuePropIdx: usize = 0;
 
                 for (data.subDefs) |subdef| {
-                    try self.visitDefinition(subDefs, &valuePropIdx, subdef, root);
+                    try self.visitDefinition(null, subDefs, &valuePropIdx, subdef, root);
                 }
 
-                var iter = subDefs.iterator();
+                iter = subDefs.iterator();
 
                 var props = try self.allocator.alloc(*llvm.Type, valuePropIdx);
 
@@ -1072,6 +1167,7 @@ pub const Interpreter = struct {
                         .impls = std.ArrayList(ProcImpl).init(self.allocator),
                         .ext = true,
                         .inl = false,
+                        .ctime = false,
                     },
                 };
 
@@ -1110,6 +1206,32 @@ pub const Interpreter = struct {
             while (iter.next()) |defin| {
                 try subDefs.put(defin.key_ptr.*, defin.value_ptr.*);
             }
+        }
+
+        if (def.Proc.ctime) {
+            std.log.info("CTIME - {s}", .{name});
+
+            var copy = try self.allocator.create(FunctionData);
+            copy.* = .{
+                .value = null,
+                .kind = null,
+                .retKind = null,
+                .out = null,
+                .outBlock = null,
+                .ctime = try self.allocator.create(Value),
+            };
+
+            for (def.Proc.def.data.Proc.in, 0..) |paramName, idx| {
+                try subDefs.put(paramName, args[idx]);
+            }
+
+            for (def.Proc.def.data.Proc.insts) |stmt| {
+                try self.visitStatement(stmt, copy, &subDefs);
+            }
+
+            std.log.info("Done - {s}", .{name});
+
+            return copy.*;
         }
 
         var out = try self.visitExpression(undefined, def.Proc.def.data.Proc.out, &subDefs);
@@ -1180,6 +1302,7 @@ pub const Interpreter = struct {
             .retKind = out,
             .out = null,
             .outBlock = null,
+            .ctime = null,
         };
 
         try def.Proc.impls.append(.{
@@ -1247,7 +1370,7 @@ pub const Interpreter = struct {
     }
 
     pub fn run(self: *Self) interpreterError!void {
-        try self.visitDefinition(&self.definitions, null, self.root, true);
+        try self.visitDefinition(null, &self.definitions, null, self.root, true);
 
         if (self.definitions.get("root")) |root| {
             if (root.Struct.subDefs.get("main")) |def| {

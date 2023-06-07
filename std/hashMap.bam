@@ -1,0 +1,86 @@
+def HashMap: proc K V -> CTIME {
+    def CAPACITY: const 50000;
+
+    def HashMapImpl: struct {
+        def HashKey: proc key -> i32 {
+            def i: var i32;
+            def j: var i32;
+            def keyPtr: var *u8;
+
+            keyPtr = key;
+
+            i = 0;
+            j = 0;
+            while (*j < K.SIZE) {
+                i = *i + i32(*(*keyPtr + *j));
+
+                j = *j + 1;
+            };
+
+            return *i % CAPACITY;
+        };
+
+        def Item: struct {
+            def key: prop K;
+            def value: prop V;
+
+            def init: proc key value -> *Item {
+                def result: var *Item;
+
+                result = std.mem.Allocator.allocate(Item.SIZE);
+                (*result).key = key;
+                (*result).value = value;
+
+                return *result;
+            };
+        };
+
+        def items: prop *(*Item);
+        def size: prop i32;
+
+        def init: proc -> HashMapImpl {
+            def result: var HashMapImpl;
+
+            result.size = CAPACITY;
+            result.items = std.mem.Allocator.allocate((*Item).SIZE * CAPACITY);
+
+            return *result;
+        };
+
+        def deinit: proc self -> i32 {
+            def i: var i32;
+            i = 0;
+
+            while (*i < *self.size) {
+                def item: const *(*self.items + *i * (*Item).SIZE);
+
+                if (item != null) {
+                   std.mem.Allocator.free(item);
+                };
+
+                i = *i + 1;
+            };
+
+            std.mem.Allocator.free(*self.items);
+
+            return 0;
+        };
+
+        def put: proc self key value -> i32 {
+            def index: const HashKey(key);
+
+            def current: const (*self.items + index * (*Item).SIZE);
+
+            if (*current == null) {
+               current = Item.init(*key, value);
+            } else {
+                // TODO: check same
+                // TODO: collision
+            };
+
+            return 0;
+        };
+    };
+
+    return HashMapImpl;
+};

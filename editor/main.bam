@@ -1,0 +1,23 @@
+def std: import "std/std.bam";
+
+def Externs: import "editor/externs.bam";
+def Editor: import "editor/core.bam";
+
+def edPtr: var *Editor;
+
+def main: proc argc argv -> i32 {
+    def ed: var Editor;
+
+    ed = Editor.init();
+    edPtr = ed;
+
+    if (argc > 1) {
+        Editor.File.open(ed, *(argv[1]));
+    };
+
+    Editor.Display.StatusBar.showMessage(ed.statusBar, "%s", "HELP: Ctrl-Q = quit");
+
+    Editor.run(ed);
+
+    return 0;
+};

@@ -1,0 +1,9 @@
+def Imports: struct {
+    def ArrayList: import "std/arrayList.bam";
+    def HashMap: import "std/hashMap.bam";
+    def Mem: import "std/mem.bam";
+};
+
+def mem: const Imports.Mem;
+def ArrayList: const Imports.ArrayList.ArrayList;
+def HashMap: const Imports.HashMap.HashMap;

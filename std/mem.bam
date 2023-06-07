@@ -1,0 +1,14 @@
+def Allocator: struct {
+    def C: struct {
+        def calloc: extern -> *u8;
+    };
+
+    def allocate: proc size -> *u8 {
+        return C.calloc(size, 1);
+    };
+
+    def realloc: extern -> *u8;
+    def free: extern -> i32;
+};
+
+def memmove: extern -> i32;

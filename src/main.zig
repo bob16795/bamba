@@ -83,7 +83,7 @@ pub fn main() !void {
 
     var output = try std.ChildProcess.exec(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "gcc", "lol.o", "-ggdb3", "-lm", "-lc", "-lLLVM"},
+        .argv = &[_][]const u8{ "gcc", "lol.o", "-ggdb3", "-lm", "-lc", "-lLLVM", "test.c" },
     });
 
     if (output.stdout.len != 0)

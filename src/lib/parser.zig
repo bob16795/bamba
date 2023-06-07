@@ -9,9 +9,11 @@ const parserError = error{
     ExpectedBrace,
     ExpectedParen,
     ExpectedSemicolon,
+    ExpectedString,
     BadDefKind,
     InvalidCharacter,
     Overflow,
+    FileError,
 };
 
 pub const Expression = struct {
@@ -67,6 +69,8 @@ pub const Expression = struct {
             expr: *Expression,
         },
     },
+    line: usize,
+    col: usize,
 
     pub fn format(
         self: Expression,
@@ -320,6 +324,8 @@ pub const Parser = struct {
                         .values = values,
                     },
                 },
+                .line = self.current.line,
+                .col = self.current.col,
             };
             return true;
         }
@@ -335,6 +341,8 @@ pub const Parser = struct {
                             .value = try std.fmt.parseInt(usize, self.current.lexeme, 0),
                         },
                     },
+                    .line = self.current.line,
+                    .col = self.current.col,
                 },
                 .STRING => .{
                     .data = .{
@@ -342,6 +350,8 @@ pub const Parser = struct {
                             .value = self.current.lexeme,
                         },
                     },
+                    .line = self.current.line,
+                    .col = self.current.col,
                 },
                 .CHAR => .{
                     .data = .{
@@ -359,6 +369,8 @@ pub const Parser = struct {
                             },
                         },
                     },
+                    .line = self.current.line,
+                    .col = self.current.col,
                 },
                 .IDENTIFIER => .{
                     .data = .{
@@ -366,6 +378,8 @@ pub const Parser = struct {
                             .name = self.current.lexeme,
                         },
                     },
+                    .line = self.current.line,
+                    .col = self.current.col,
                 },
                 .LEFT_PAREN => {
                     try self.advance();
@@ -381,6 +395,8 @@ pub const Parser = struct {
                                 .expr = expr,
                             },
                         },
+                        .line = self.current.line,
+                        .col = self.current.col,
                     };
                 },
                 else => {
@@ -408,6 +424,8 @@ pub const Parser = struct {
                                 .values = values,
                             },
                         },
+                        .line = self.current.line,
+                        .col = self.current.col,
                     };
                 },
                 .TILDE => {
@@ -423,6 +441,8 @@ pub const Parser = struct {
                                 .values = values,
                             },
                         },
+                        .line = self.current.line,
+                        .col = self.current.col,
                     };
                 },
                 else => {},
@@ -525,6 +545,8 @@ pub const Parser = struct {
                                     .values = params,
                                 },
                             },
+                            .line = self.current.line,
+                            .col = self.current.col,
                         };
 
                         added = true;
@@ -553,6 +575,8 @@ pub const Parser = struct {
                                     .values = params,
                                 },
                             },
+                            .line = self.current.line,
+                            .col = self.current.col,
                         };
 
                         added = true;
@@ -689,8 +713,6 @@ pub const Parser = struct {
         var name = self.current.lexeme;
         try self.advance();
 
-        std.log.info("{}", .{self.current});
-
         if (!try self.match(.COLON)) return error.ExpectedColon;
 
         var defKind = self.current.kind;
@@ -795,6 +817,24 @@ pub const Parser = struct {
                         },
                     },
                 };
+            },
+            .IMPORT => {
+                var inputFile = self.current.lexeme;
+
+                if (!try self.match(.STRING)) return error.ExpectedString;
+
+                var conts = try self.allocator.alloc(u8, 1000000);
+                var contsLen = (std.fs.cwd().openFile(inputFile, .{}) catch return error.FileError).readAll(conts) catch return error.FileError;
+
+                var scn = scanner.Scanner.init(conts[0..contsLen]);
+                var parser = Parser.init(scn, self.allocator);
+
+                if (!try self.match(.SEMI_COLON)) return error.ExpectedSemicolon;
+
+                var result = try parser.parse();
+                result.name = name;
+
+                return result;
             },
             .EXTERN => {
                 var in = try self.allocator.alloc([]const u8, 0);

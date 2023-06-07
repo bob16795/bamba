@@ -1,0 +1,35 @@
+def FILE: struct{
+    def data: prop u8[216];
+};
+def TIME: const i64;
+
+def snprintf: extern -> i32;
+def fwrite: extern -> i32;
+def printf: extern -> i32;
+def sscanf: extern -> i32;
+def iscntrl: extern val -> i8;
+def read: extern file char num -> i32;
+def write: extern -> i32;
+def exit: extern -> i32;
+def ioctl: extern -> i32;
+def realloc: const std.mem.Allocator.realloc;
+def malloc: const std.mem.Allocator.allocate;
+def free: const std.mem.Allocator.free;
+def memset: extern -> i32;
+def memcpy: extern -> i32;
+def memmove: const std.mem.memmove;
+def strlen: extern -> i32;
+def strcpy: extern -> i32;
+def strcmp: extern -> i32;
+def fopen: extern -> *FILE;
+def fclose: extern -> i32;
+def getline: extern -> i32;
+def strdup: extern -> *i8;
+def time: extern -> TIME;
+def strstr: extern -> *i8;
+def strncmp: extern -> i32;
+def strchr: extern -> *i8;
+def strrchr: extern -> *i8;
+def isspace: extern -> i8;
+def setupSignals: extern -> i32;
+def feof: extern -> i8;

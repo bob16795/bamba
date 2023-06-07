@@ -414,8 +414,8 @@ pub const Module = opaque {
     pub const addModuleCodeViewFlag = ZigLLVMAddModuleCodeViewFlag;
     extern fn ZigLLVMAddModuleCodeViewFlag(module: *Module) void;
 
-    pub const createDIBuilder = ZigLLVMCreateDIBuilder;
-    extern fn ZigLLVMCreateDIBuilder(module: *Module, allow_unresolved: bool) *DIBuilder;
+    pub const createDIBuilder = LLVMCreateDIBuilder;
+    extern fn LLVMCreateDIBuilder(module: *Module) *DIBuilder;
 
     pub const setModuleInlineAsm2 = LLVMSetModuleInlineAsm2;
     extern fn LLVMSetModuleInlineAsm2(M: *Module, Asm: [*]const u8, Len: usize) void;
