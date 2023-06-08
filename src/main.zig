@@ -31,13 +31,15 @@ pub fn main() !void {
     var psr = parser.Parser.init(scn, allocator);
     var root = try psr.parse();
 
-    std.debug.print("{}\n", .{root});
+    var data = try std.fmt.allocPrint(allocator, "{}\n", .{root});
+    var dataFile = try std.fs.cwd().createFile("AST", .{});
+    _ = try dataFile.write(data);
 
     var inter = interpreter.Interpreter.init(allocator, root);
     inter.run() catch |err| {
         var str = inter.module.printToString();
 
-        var file = try std.fs.cwd().createFile("tmp", .{});
+        var file = try std.fs.cwd().createFile("ir", .{});
 
         var writing: []const u8 = undefined;
         writing.ptr = @ptrCast([*]const u8, str);
@@ -52,7 +54,7 @@ pub fn main() !void {
 
     var str = inter.module.printToString();
 
-    var file = try std.fs.cwd().createFile("tmp", .{});
+    var file = try std.fs.cwd().createFile("ir", .{});
 
     var writing: []const u8 = undefined;
     writing.ptr = @ptrCast([*]const u8, str);
@@ -66,7 +68,7 @@ pub fn main() !void {
 
     const CPU: [*:0]const u8 = "generic";
     const features: [*:0]const u8 = "";
-    const thriple: [*:0]const u8 = "x86_64-pc-linux-gnu";
+    const thriple: [*:0]const u8 = "x86_64-linux.6.3.4...6.3.4-gnu.2.36";
     const out: [*:0]const u8 = "lol.o";
     var opt: ?*llvm.RelocMode = null;
     var t: *llvm.Target = undefined;
@@ -75,7 +77,7 @@ pub fn main() !void {
         std.log.info("{s}", .{err});
     }
 
-    var targetMachine = llvm.TargetMachine.create(t, thriple, CPU, features, opt, .Default);
+    var targetMachine = llvm.TargetMachine.create(t, thriple, CPU, features, opt, .Aggressive);
 
     targetMachine.emitToFile(inter.module, out, .ObjectFile);
 
@@ -83,7 +85,7 @@ pub fn main() !void {
 
     var output = try std.ChildProcess.exec(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "gcc", "lol.o", "-ggdb3", "-lm", "-lc", "-lLLVM", "test.c" },
+        .argv = &[_][]const u8{ "gcc", "lol.o", "-lm", "-lncurses", "-lc", "-O3", "test.c" },
     });
 
     if (output.stdout.len != 0)

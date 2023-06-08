@@ -110,6 +110,8 @@ pub const Expression = struct {
     }
 };
 
+var fmtIndents: usize = 0;
+
 pub const Statement = struct {
     const StatementKind = enum {
         Expression,
@@ -145,6 +147,7 @@ pub const Statement = struct {
 
         try writer.print("{s}: ", .{@tagName(self.data)});
 
+        fmtIndents += 1;
         switch (self.data) {
             .Expression => |data| {
                 try writer.print("{}", .{data});
@@ -156,12 +159,61 @@ pub const Statement = struct {
                 try writer.print("{}", .{data});
             },
             .If => |data| {
-                try writer.print("If {} Then {any} Else {?any}", .{ data.check, data.body, data.bodyElse });
+                try writer.print("{}", .{data.check});
+                fmtIndents -= 1;
+                _ = try writer.write("\n");
+                for (0..fmtIndents) |_| {
+                    _ = try writer.write("  ");
+                }
+                try writer.print("Then:", .{});
+                fmtIndents += 1;
+                for (data.body) |item| {
+                    _ = try writer.write("\n");
+                    for (0..fmtIndents) |_| {
+                        _ = try writer.write("  ");
+                    }
+                    try writer.print("{}", .{item});
+                }
+                fmtIndents -= 1;
+                if (data.bodyElse != null) {
+                    _ = try writer.write("\n");
+                    for (0..fmtIndents) |_| {
+                        _ = try writer.write("  ");
+                    }
+                    _ = try writer.write("Else:");
+                    fmtIndents += 1;
+                    for (data.bodyElse.?) |item| {
+                        _ = try writer.write("\n");
+                        for (0..fmtIndents) |_| {
+                            _ = try writer.write("  ");
+                        }
+                        try writer.print("{}", .{item});
+                    }
+                    fmtIndents -= 1;
+                }
+                fmtIndents += 1;
             },
             .While => |data| {
-                try writer.print("While {} Do {any}", .{ data.check, data.body });
+                fmtIndents -= 1;
+                try writer.print("{}", .{data.check});
+                _ = try writer.write("\n");
+                for (0..fmtIndents) |_| {
+                    _ = try writer.write("  ");
+                }
+                try writer.print("Do", .{});
+                fmtIndents += 1;
+                for (data.body) |item| {
+                    _ = try writer.write("\n");
+                    for (0..fmtIndents) |_| {
+                        _ = try writer.write("  ");
+                    }
+                    try writer.print("{}", .{item});
+                }
+                fmtIndents -= 1;
+                fmtIndents += 1;
             },
         }
+        fmtIndents -= 1;
     }
 };
 
@@ -207,14 +259,21 @@ pub const Definition = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
         _ = options;
 
         try writer.print("{s}: _{s}", .{ @tagName(self.data), self.name });
 
+        fmtIndents += 1;
+
         switch (self.data) {
             .Struct => |data| {
                 for (data.subDefs) |def| {
-                    try writer.print("\n" ++ fmt ++ "  {  }", .{def});
+                    _ = try writer.write("\n");
+                    for (0..fmtIndents) |_| {
+                        _ = try writer.write("  ");
+                    }
+                    try writer.print("{}", .{def});
                 }
             },
             .Var => |data| {
@@ -230,25 +289,47 @@ pub const Definition = struct {
                 try writer.print("{}", .{data.kind});
             },
             .Proc => |data| {
-                _ = try writer.write("\n" ++ fmt ++ "  In:");
+                _ = try writer.write("\n");
+                for (0..fmtIndents) |_| {
+                    _ = try writer.write("  ");
+                }
+                _ = try writer.write("In:");
 
                 for (data.in) |in| {
                     try writer.print(" _{s}", .{in});
                 }
 
-                _ = try writer.write("\n" ++ fmt ++ "  Out: ");
+                _ = try writer.write("\n");
+                for (0..fmtIndents) |_| {
+                    _ = try writer.write("  ");
+                }
+                _ = try writer.write("Out: ");
 
-                try writer.print("\n" ++ fmt ++ "    {}", .{data.out});
+                try writer.print("{}", .{data.out});
+
+                _ = try writer.write("\n");
+                for (0..fmtIndents) |_| {
+                    _ = try writer.write("  ");
+                }
+                _ = try writer.write("Code: ");
+
+                fmtIndents += 1;
 
                 for (data.insts) |inst| {
-                    try writer.print("\n" ++ fmt ++ "  {}", .{inst});
+                    _ = try writer.write("\n");
+                    for (0..fmtIndents) |_| {
+                        _ = try writer.write("  ");
+                    }
+                    try writer.print("{}", .{inst});
                 }
+                fmtIndents -= 1;
             },
             .Extern => |data| {
                 _ = try writer.write(" of ");
                 try writer.print("{}", .{data.out});
             },
         }
+        fmtIndents -= 1;
     }
 };
 

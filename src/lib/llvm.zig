@@ -350,8 +350,8 @@ pub const Module = opaque {
     pub const setModulePIELevel = ZigLLVMSetModulePIELevel;
     extern fn ZigLLVMSetModulePIELevel(module: *Module) void;
 
-    pub const setModuleCodeModel = ZigLLVMSetModuleCodeModel;
-    extern fn ZigLLVMSetModuleCodeModel(module: *Module, code_model: CodeModel) void;
+    pub const setModuleCodeModel = LLVMSetCodeModel;
+    extern fn LLVMSetCodeModel(module: *Module, code_model: CodeModel) void;
 
     pub const addFunction = LLVMAddFunction;
     extern fn LLVMAddFunction(*Module, Name: [*:0]const u8, FunctionTy: *Type) *Value;
@@ -415,7 +415,7 @@ pub const Module = opaque {
     extern fn ZigLLVMAddModuleCodeViewFlag(module: *Module) void;
 
     pub const createDIBuilder = LLVMCreateDIBuilder;
-    extern fn LLVMCreateDIBuilder(module: *Module) *DIBuilder;
+    extern fn LLVMCreateDIBuilder(module: *Module, allow_unresolved: bool) *DIBuilder;
 
     pub const setModuleInlineAsm2 = LLVMSetModuleInlineAsm2;
     extern fn LLVMSetModuleInlineAsm2(M: *Module, Asm: [*]const u8, Len: usize) void;

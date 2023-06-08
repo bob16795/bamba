@@ -77,23 +77,19 @@ pub const Interpreter = struct {
             ext: bool,
             inl: bool,
             ctime: bool,
+            name: []const u8,
         },
 
         pub fn sameAs(self: *const Value, other: *const Value) bool {
             if (@enumToInt(self.*) != @enumToInt(other.*)) return false;
 
             switch (self.*) {
-                .ValProc => return false,
-                .Val => return false,
-                .Prop => return false,
-                .Proc => return false,
-                .ConstInt => return false,
-                .Null => return false,
-
                 .Array => return self.Array.child.sameAs(other.Array.child),
                 .Ptr => return self.Ptr.child.sameAs(other.Ptr.child),
                 .Type => return self.Type.value == other.Type.value,
                 .Struct => return self.Struct.value == other.Struct.value,
+
+                else => return self == other,
             }
 
             return true;
@@ -130,6 +126,7 @@ pub const Interpreter = struct {
         out: ?*llvm.Value,
         outBlock: ?*llvm.BasicBlock,
         ctime: ?*Value,
+        name: []const u8,
     };
 
     context: *llvm.Context,
@@ -139,13 +136,16 @@ pub const Interpreter = struct {
     allocator: std.mem.Allocator,
 
     definitions: DefList,
+    strings: std.StringHashMap(*Value),
 
     root: parser.Definition,
 
     pub fn visitStatement(self: *Self, stmt: parser.Statement, func: ?*FunctionData, defs: *DefList) interpreterError!void {
         switch (stmt.data) {
             .Definition => |data| {
-                try self.visitDefinition(func, defs, null, data, false);
+                if (func == null) return error.InvalidStatement;
+
+                try self.visitDefinition(func, defs, null, data, false, func.?.name);
             },
             .Expression => |data| {
                 _ = try self.visitExpression(func, data, defs);
@@ -263,6 +263,10 @@ pub const Interpreter = struct {
                 return result;
             },
             .ConstString => |data| {
+                if (self.strings.get(data.value)) |result| {
+                    return result;
+                }
+
                 var finalStr = try self.allocator.alloc(u8, data.value.len);
 
                 var idx: usize = 0;
@@ -323,6 +327,8 @@ pub const Interpreter = struct {
                     },
                 };
 
+                try self.strings.put(data.value, result);
+
                 return result;
             },
             .Ident => |data| {
@@ -352,11 +358,11 @@ pub const Interpreter = struct {
                     return def;
                 }
 
-                if (self.definitions.get("root")) |root| {
-                    if (root.Struct.subDefs.get(data.name)) |def| {
-                        return def;
-                    }
-                }
+                //if (self.definitions.get("root")) |root| {
+                //    if (root.Struct.subDefs.get(data.name)) |def| {
+                //        return def;
+                //    }
+                //}
 
                 std.log.info("'{s}'", .{data.name});
 
@@ -595,7 +601,7 @@ pub const Interpreter = struct {
 
                         callParams.len = idx;
 
-                        var functionData = try self.implement(func, function, function.Proc.def.name, params, function.Proc.parentDefs);
+                        var functionData = try self.implement(func, function, function.Proc.name, params, function.Proc.parentDefs);
 
                         if (functionData.ctime) |ctime| {
                             return ctime;
@@ -1018,8 +1024,13 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn visitDefinition(self: *Self, func: ?*FunctionData, parent: *DefList, propIdx: ?*usize, def: parser.Definition, root: bool) interpreterError!void {
-        var zname = try self.allocator.dupeZ(u8, def.name);
+    pub fn visitDefinition(self: *Self, func: ?*FunctionData, parent: *DefList, propIdx: ?*usize, def: parser.Definition, root: bool, rootName: []const u8) interpreterError!void {
+        var name = try std.mem.concat(self.allocator, u8, &.{ rootName, if (rootName.len == 0) "" else "_", def.name });
+        var zname = try std.mem.concatWithSentinel(self.allocator, u8, &.{ rootName, if (rootName.len == 0) "" else "_", def.name }, 0);
+        if (std.mem.eql(u8, name, "root")) {
+            name = "";
+            zname[0] = 0;
+        }
 
         switch (def.data) {
             .Var => |data| {
@@ -1100,6 +1111,7 @@ pub const Interpreter = struct {
                         .ext = false,
                         .inl = def.data.Proc.inl,
                         .ctime = ctime,
+                        .name = name,
                     },
                 };
 
@@ -1128,10 +1140,15 @@ pub const Interpreter = struct {
                     }
                 }
 
+                if (parent.get("Self") != null)
+                    try subDefs.put("Parent", parent.get("Self") orelse unreachable);
+
+                try subDefs.put("Self", value);
+
                 var valuePropIdx: usize = 0;
 
                 for (data.subDefs) |subdef| {
-                    try self.visitDefinition(null, subDefs, &valuePropIdx, subdef, root);
+                    try self.visitDefinition(null, subDefs, &valuePropIdx, subdef, root, name);
                 }
 
                 iter = subDefs.iterator();
@@ -1152,6 +1169,7 @@ pub const Interpreter = struct {
                 var value = try self.allocator.create(Value);
                 value.* = .{
                     .Proc = .{
+                        .name = def.name,
                         .parentDefs = parent,
                         .def = .{
                             .name = def.name,
@@ -1219,6 +1237,7 @@ pub const Interpreter = struct {
                 .out = null,
                 .outBlock = null,
                 .ctime = try self.allocator.create(Value),
+                .name = name,
             };
 
             for (def.Proc.def.data.Proc.in, 0..) |paramName, idx| {
@@ -1303,6 +1322,7 @@ pub const Interpreter = struct {
             .out = null,
             .outBlock = null,
             .ctime = null,
+            .name = name,
         };
 
         try def.Proc.impls.append(.{
@@ -1370,7 +1390,7 @@ pub const Interpreter = struct {
     }
 
     pub fn run(self: *Self) interpreterError!void {
-        try self.visitDefinition(null, &self.definitions, null, self.root, true);
+        try self.visitDefinition(null, &self.definitions, null, self.root, true, "");
 
         if (self.definitions.get("root")) |root| {
             if (root.Struct.subDefs.get("main")) |def| {
@@ -1416,7 +1436,7 @@ pub const Interpreter = struct {
 
                 var params: [2]*Value = .{ argc, argv };
 
-                _ = try self.implement(null, def, "main", &params, null);
+                _ = try self.implement(null, def, "main", &params, &root.Struct.subDefs);
 
                 return;
             }
@@ -1437,6 +1457,7 @@ pub const Interpreter = struct {
         var builder = ctx.createBuilder();
 
         return .{
+            .strings = std.StringHashMap(*Value).init(allocator),
             .definitions = DefList.init(allocator),
             .allocator = allocator,
             .context = ctx,
