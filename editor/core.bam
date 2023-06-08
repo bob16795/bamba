@@ -5,12 +5,9 @@ def Settings: struct {
     def NUMBERLEN: const 4;
 };
 
-def buffers: prop std.ArrayList(Buffer);
-def currentBuffer: prop u32;
-def rows: prop u32;
-def cols: prop u32;
-
 def defaultCallback: proc a b c -> i32 { return 0; };
+
+def instance: var *Self;
 
 def getBuffer: proc self -> *Buffer {
     return *self.buffers.items + (Buffer.SIZE * *self.currentBuffer);
@@ -69,11 +66,15 @@ def Terminal: struct {
 
         tcsetattr(0, 2, raw);
 
+        Externs.write(1, "\e[5 q", 5);
+
         return 0;
     };
 
     def disableRawMode: proc -> i32 {
         tcsetattr(0, 2, startTermios);
+
+        Externs.write(1, "\e[0 q", 5);
 
         return 0;
     };
@@ -90,6 +91,19 @@ def Terminal: struct {
 };
 
 def Input: struct {
+    def Modes: struct {
+        def Normal: const 0;
+    };
+
+    def init: proc -> Input {
+        def result: var Input;
+
+        result.buffer = std.ArrayList(Key).init();
+        result.mode = 0;
+
+        return *result;
+    };
+
     def Key: struct {
         def value: prop u32;
 
@@ -102,6 +116,14 @@ def Input: struct {
         def PAGEUP: const 1004;
         def PAGEDOWN: const 1005;
         def DELETE: const 1006;
+        def CTRLARROWUP: const 1007;
+        def CTRLARROWDOWN: const 1008;
+        def CTRLARROWLEFT: const 1009;
+        def CTRLARROWRIGHT: const 1010;
+        def SHIFTARROWUP: const 1011;
+        def SHIFTARROWDOWN: const 1012;
+        def SHIFTARROWLEFT: const 1013;
+        def SHIFTARROWRIGHT: const 1014;
 
         def CTRL: inline key -> i32 {
             return key & 31;
@@ -116,7 +138,7 @@ def Input: struct {
         while (Externs.read(0, c.value, 1) != 1) {};
 
         if (*c.value == '\e') {
-            def seq: var u8[3];
+            def seq: var u8[5];
 
             if (Externs.read(0, seq[0], 1) != 1) {
                return *c;
@@ -126,6 +148,31 @@ def Input: struct {
             };
 
             if (*seq[0] == '[') {
+                if ((*seq[1]) == '1') {
+                    if (Externs.read(0, seq[2], 1) != 1) {
+                        return *c;
+                    };
+                    if (*seq[2] == ';') {
+                        if (Externs.read(0, seq[3], 1) != 1) {
+                            return *c;
+                        };
+                        if (Externs.read(0, seq[4], 1) != 1) {
+                            return *c;
+                        };
+                        if (*seq[3] == '5') {
+                            if (*seq[1] == 'A') { c.value = Key.CTRLARROWUP; };
+                            if (*seq[1] == 'B') { c.value = Key.CTRLARROWDOWN; };
+                            if (*seq[1] == 'C') { c.value = Key.CTRLARROWLEFT; };
+                            if (*seq[1] == 'D') { c.value = Key.CTRLARROWRIGHT; };
+                        };
+                        if (*seq[3] == '2') {
+                            if (*seq[1] == 'A') { c.value = Key.SHIFTARROWUP; };
+                            if (*seq[1] == 'B') { c.value = Key.SHIFTARROWDOWN; };
+                            if (*seq[1] == 'C') { c.value = Key.SHIFTARROWLEFT; };
+                            if (*seq[1] == 'D') { c.value = Key.SHIFTARROWRIGHT; };
+                        };
+                    };
+                };
                 if ((*seq[1] > ('0' - 1)) & (*seq[1] < ('9' + 1))) {
                     if (Externs.read(0, seq[2], 1) != 1) {
                         return *c;
@@ -148,9 +195,9 @@ def Input: struct {
         return *c;
     };
 
-    def processKey: proc self -> i32 {
+    def processKey: proc ed -> i32 {
         def c: var Key;
-        def buffer: const Editor.getBuffer(self);
+        def buffer: const Editor.getBuffer(ed);
 
         c = Input.readKey();
 
@@ -163,53 +210,55 @@ def Input: struct {
             Externs.exit(0);
         };
 
+        ed.input.buffer.append(c);
+        
         def processed: var u1;
         processed = 0;
 
-        processed = *processed | moveCursor(self, c);
+        processed = *processed | moveCursor(ed, c);
 
         if (*c.value == Key.CTRL('o')) {
-            Editor.File.open(self, null);
+            Editor.File.open(ed, null);
 
             processed = 1;
         };
 
         if (*c.value == Key.CTRL('s')) {
-            Editor.File.save(self, *buffer.fileName);
+            Editor.File.save(ed, *buffer.fileName);
 
             processed = 1;
         };
 
         if (*c.value == Key.CTRL('a')) {
-            if (*self.currentBuffer != 0) {
-                self.currentBuffer = *self.currentBuffer - 1;
+            if (*ed.currentBuffer != 0) {
+                ed.currentBuffer = *ed.currentBuffer - 1;
             };
 
             processed = 1;
         };
 
         if (*c.value == Key.CTRL('d')) {
-            if (*self.currentBuffer != *self.buffers.len - 1) {
-                self.currentBuffer = *self.currentBuffer + 1;
+            if (*ed.currentBuffer != *ed.buffers.len - 1) {
+                ed.currentBuffer = *ed.currentBuffer + 1;
             };
 
             processed = 1;
         };
 
         if (*c.value == Key.CTRL('b')) {
-            newBuffer(self);
+            newBuffer(ed);
 
             processed = 1;
         };
 
         if (*c.value == Key.CTRL('f')) {
-            Editor.Search.find(self);
+            Editor.Search.find(ed);
 
             processed = 1;
         };
 
         if (*c.value == '\r') {
-            insertNewline(self);
+            insertNewline(ed);
 
             processed = 1;
         };
@@ -218,7 +267,7 @@ def Input: struct {
             def subKey: var Key;
             subKey.value = Key.ARROWDOWN;
 
-            moveCursor(self, subKey);
+            moveCursor(ed, subKey);
             processed = 1;
         };
 
@@ -226,7 +275,7 @@ def Input: struct {
             def subKey: var Key;
             subKey.value = Key.ARROWUP;
 
-            moveCursor(self, subKey);
+            moveCursor(ed, subKey);
             processed = 1;
         };
 
@@ -237,12 +286,12 @@ def Input: struct {
                 def subKey: var Key;
                 subKey.value = Key.ARROWLEFT;
 
-                moveCursor(self, subKey);
+                moveCursor(ed, subKey);
             };
 
-            scroll(self);
+            scroll(ed);
 
-            deleteChar(self);
+            deleteChar(ed);
 
             processed = 1;
         };
@@ -251,7 +300,7 @@ def Input: struct {
         processed = *processed | ((*c.value) > 127 | *c.value == '\e');
 
         if (~(*processed)) {
-            insertChar(self, c);
+            insertChar(ed, c);
         };
 
         return 0;
@@ -436,6 +485,9 @@ def Input: struct {
 
         return 0;
     };
+    
+    def buffer: prop std.ArrayList(Key);
+    def mode: prop i8;
 };
 
 def Display: struct {
@@ -976,7 +1028,7 @@ def File: struct {
 };
 
 def doResize: proc dummy -> i32 {
-    def self: const *edPtr;
+    def self: const *instance;
 
     Terminal.getSize(self.rows, self.cols);
     self.rows = *self.rows - 2;
@@ -995,8 +1047,9 @@ def init: proc -> Editor {
     result.buffers = std.ArrayList(Buffer).init();
     result.buffers.append(Buffer.init());
     result.currentBuffer = 0;
+    result.input = Input.init();
 
-    edPtr = result;
+    instance = result;
 
     doResize(0);
 
@@ -1019,3 +1072,10 @@ def run: proc self -> i32 {
 
     return 0;
 };
+
+def input: prop Input;
+def buffers: prop std.ArrayList(Buffer);
+def currentBuffer: prop u32;
+def rows: prop u32;
+def cols: prop u32;
+

@@ -20,6 +20,7 @@ def Syntax: struct {
 
     def getComment: proc ext -> *u8 {
         if (Externs.strcmp(ext, ".c") == 0) { return "//"; };
+        if (Externs.strcmp(ext, ".h") == 0) { return "//"; };
         if (Externs.strcmp(ext, ".bam") == 0) { return "//"; };
 
         return null;
@@ -27,6 +28,7 @@ def Syntax: struct {
 
     def getMLCommentStart: proc ext -> *u8 {
         if (Externs.strcmp(ext, ".c") == 0) { return "/*"; };
+        if (Externs.strcmp(ext, ".h") == 0) { return "/*"; };
 
 
         return null;
@@ -34,12 +36,14 @@ def Syntax: struct {
     
     def getMLCommentEnd: proc ext -> *u8 {
         if (Externs.strcmp(ext, ".c") == 0) { return "*/"; };
+        if (Externs.strcmp(ext, ".h") == 0) { return "*/"; };
 
         return null;
     };
 
     def getName: proc ext -> *u8 {
         if (Externs.strcmp(ext, ".c") == 0) { return "C"; };
+        if (Externs.strcmp(ext, ".h") == 0) { return "H"; };
         if (Externs.strcmp(ext, ".bam") == 0) { return "BAMBA"; };
 
         return null;
@@ -49,7 +53,8 @@ def Syntax: struct {
         def result: var *(*u8);
         result = null;
 
-        if (Externs.strcmp(ext, ".c") == 0) {
+        if (Externs.strcmp(ext, ".c") == 0 |
+            Externs.strcmp(ext, ".h") == 0) {
             result = Externs.realloc(*result, (*u8).SIZE * 24);
             (*result + (*u8).SIZE * 0) = "switch";
             (*result + (*u8).SIZE * 1) = "if";
@@ -95,7 +100,6 @@ def Syntax: struct {
             (*result + (*u8).SIZE * 13) = "->|";
             (*result + (*u8).SIZE * 14) = null;
         };
-
 
         return *result;
     };
@@ -584,6 +588,17 @@ def init: proc -> Buffer {
     return *result;
 };
 
+def Selection: struct {
+    def enabled: prop u1;
+    def startcy: prop u32;
+    def startcx: prop u32;
+
+    def start: proc cx cy -> i32 {
+
+        return 0;
+    };
+};
+
 def rows: prop std.ArrayList(ERow);
 def fileName: prop *u8;
 def dirty: prop u1;
@@ -593,3 +608,4 @@ def cy: prop u32;
 def rx: prop u32;
 def rowoff: prop u32;
 def coloff: prop u32;
+def selection: prop Selection;

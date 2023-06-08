@@ -1,0 +1,10 @@
+def WINDOW: struct {};
+def SCREEN: struct {};
+
+def initscr: extern -> i32;
+def clear: extern -> i32;
+def noecho: extern -> i32;
+def stdscr: extern -> *SCREEN;
+def getmaxy: extern -> i32;
+def getmaxx: extern -> i32;
+def newwin: extern -> i32;
