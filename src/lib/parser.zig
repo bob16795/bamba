@@ -10,6 +10,7 @@ const parserError = error{
     ExpectedParen,
     ExpectedSemicolon,
     ExpectedString,
+    BadDollarExpr,
     BadDefKind,
     InvalidCharacter,
     Overflow,
@@ -19,6 +20,7 @@ const parserError = error{
 pub const Expression = struct {
     const ExpressionKind = enum {
         ConstInt,
+        ConstFloat,
         ConstString,
         Ident,
         Operation,
@@ -48,12 +50,17 @@ pub const Expression = struct {
         Neg,
 
         // unknown
+        ConstOpaque,
+        ConstArray,
         Call,
     };
 
     data: union(ExpressionKind) {
         ConstInt: struct {
             value: usize,
+        },
+        ConstFloat: struct {
+            value: f64,
         },
         ConstString: struct {
             value: []const u8,
@@ -84,6 +91,9 @@ pub const Expression = struct {
         switch (self.data) {
             .ConstInt => |data| {
                 try writer.print("#{}", .{data.value});
+            },
+            .ConstFloat => |data| {
+                try writer.print("#f{}", .{data.value});
             },
             .ConstString => |data| {
                 try writer.print("'{s}'", .{data.value});
@@ -124,7 +134,7 @@ pub const Statement = struct {
     data: union(StatementKind) {
         Expression: Expression,
         Definition: Definition,
-        Return: Expression,
+        Return: ?Expression,
         While: struct {
             check: Expression,
             body: []Statement,
@@ -416,6 +426,87 @@ pub const Parser = struct {
     pub fn parseExpression(self: *Self, level: ExpressionLevel) parserError!Expression {
         if (level == .Primary) {
             var result: Expression = switch (self.current.kind) {
+                .DOLLAR => {
+                    try self.advance();
+
+                    if (try self.match(.LEFT_BRACKET)) {
+                        var kind = try self.parseExpression(.Assignment);
+
+                        if (!try self.match(.COLON)) return error.ExpectedColon;
+
+                        var params = try self.allocator.alloc(Expression, 1);
+                        params[0] = kind;
+
+                        while (!try self.match(.RIGHT_BRACKET)) {
+                            var param = try self.parseExpression(.Assignment);
+                            params = try self.allocator.realloc(params, params.len + 1);
+
+                            params[params.len - 1] = param;
+
+                            if (!try self.match(.COMMA)) {
+                                if (!try self.match(.RIGHT_BRACKET)) {
+                                    std.log.info("{any}", .{params});
+                                    return error.ExpectedParen;
+                                }
+                                break;
+                            }
+                        }
+
+                        var result = .{
+                            .data = .{
+                                .Operation = .{
+                                    .op = .ConstArray,
+                                    .values = params,
+                                },
+                            },
+                            .line = self.current.line,
+                            .col = self.current.col,
+                        };
+
+                        return result;
+                    } else if (try self.match(.LEFT_BRACE)) {
+                        var params = try self.allocator.alloc(Expression, 0);
+
+                        while (!try self.match(.RIGHT_BRACE)) {
+                            var param = try self.parseExpression(.Assignment);
+                            params = try self.allocator.realloc(params, params.len + 1);
+
+                            params[params.len - 1] = param;
+
+                            if (!try self.match(.COMMA)) {
+                                if (!try self.match(.RIGHT_BRACE)) {
+                                    std.log.info("{any}", .{params});
+                                    return error.ExpectedParen;
+                                }
+                                break;
+                            }
+                        }
+
+                        var result = .{
+                            .data = .{
+                                .Operation = .{
+                                    .op = .ConstOpaque,
+                                    .values = params,
+                                },
+                            },
+                            .line = self.current.line,
+                            .col = self.current.col,
+                        };
+
+                        return result;
+                    }
+
+                    return error.BadDollarExpr;
+                },
+                .FLOAT => .{
+                    .data = .{
+                        .ConstFloat = .{
+                            .value = try std.fmt.parseFloat(f64, self.current.lexeme),
+                        },
+                    },
+                    .line = self.current.line,
+                    .col = self.current.col,
+                },
                 .NUMBER => .{
                     .data = .{
                         .ConstInt = .{
@@ -686,6 +777,12 @@ pub const Parser = struct {
             .RET => {
                 try self.advance();
 
+                if (try self.match(.SEMI_COLON)) return .{
+                    .data = .{
+                        .Return = null,
+                    },
+                };
+
                 var expr = try self.parseExpression(.Assignment);
 
                 if (!try self.match(.SEMI_COLON)) return error.ExpectedSemicolon;
@@ -797,6 +894,7 @@ pub const Parser = struct {
         if (!try self.match(.COLON)) return error.ExpectedColon;
 
         var defKind = self.current.kind;
+        var defin = self.current;
         try self.advance();
 
         switch (defKind) {
@@ -899,6 +997,35 @@ pub const Parser = struct {
                     },
                 };
             },
+            .EMBED => {
+                var inputFile = self.current.lexeme;
+
+                if (!try self.match(.STRING)) return error.ExpectedString;
+
+                var conts = try self.allocator.alloc(u8, 1000000);
+                var contsLen = (std.fs.cwd().openFile(inputFile, .{}) catch return error.FileError).readAll(conts) catch return error.FileError;
+
+                if (!try self.match(.SEMI_COLON)) return error.ExpectedSemicolon;
+
+                var string = .{
+                    .line = self.current.line,
+                    .col = self.current.col,
+                    .data = .{
+                        .ConstString = .{
+                            .value = conts[0..contsLen],
+                        },
+                    },
+                };
+
+                return .{
+                    .name = name,
+                    .data = .{
+                        .Const = .{
+                            .value = string,
+                        },
+                    },
+                };
+            },
             .IMPORT => {
                 var inputFile = self.current.lexeme;
 
@@ -907,7 +1034,7 @@ pub const Parser = struct {
                 var conts = try self.allocator.alloc(u8, 1000000);
                 var contsLen = (std.fs.cwd().openFile(inputFile, .{}) catch return error.FileError).readAll(conts) catch return error.FileError;
 
-                var scn = scanner.Scanner.init(conts[0..contsLen]);
+                var scn = scanner.Scanner.init(inputFile, conts[0..contsLen]);
                 var parser = Parser.init(scn, self.allocator);
 
                 if (!try self.match(.SEMI_COLON)) return error.ExpectedSemicolon;
@@ -942,7 +1069,7 @@ pub const Parser = struct {
             },
             else => {},
         }
-        std.log.info("bad defKind: {}", .{defKind});
+        std.log.info("bad defKind: {}", .{defin});
         return error.BadDefKind;
     }
 

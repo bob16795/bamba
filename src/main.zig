@@ -27,13 +27,13 @@ pub fn main() !void {
     var buff = try allocator.alloc(u8, 1000000);
     var contsLen = try (try std.fs.cwd().openFile(inputFile.?, .{})).readAll(buff);
 
-    var scn = scanner.Scanner.init(buff[0..contsLen]);
+    var scn = scanner.Scanner.init(inputFile.?, buff[0..contsLen]);
     var psr = parser.Parser.init(scn, allocator);
     var root = try psr.parse();
 
-    var data = try std.fmt.allocPrint(allocator, "{}\n", .{root});
-    var dataFile = try std.fs.cwd().createFile("AST", .{});
-    _ = try dataFile.write(data);
+    //var data = try std.fmt.allocPrint(allocator, "{}\n", .{root});
+    //var dataFile = try std.fs.cwd().createFile("AST", .{});
+    //_ = try dataFile.write(data);
 
     var inter = interpreter.Interpreter.init(allocator, root);
     inter.run() catch |err| {
@@ -64,9 +64,9 @@ pub fn main() !void {
 
     _ = try file.write(writing);
 
-    std.log.info("LLVM lol.o", .{});
+    std.debug.print("LLVM lol.o\n", .{});
 
-    const CPU: [*:0]const u8 = "generic";
+    const CPU: [*:0]const u8 = "x86-64";
     const features: [*:0]const u8 = "";
     const thriple: [*:0]const u8 = "x86_64-linux.6.3.4...6.3.4-gnu.2.36";
     const out: [*:0]const u8 = "lol.o";
@@ -77,15 +77,15 @@ pub fn main() !void {
         std.log.info("{s}", .{err});
     }
 
-    var targetMachine = llvm.TargetMachine.create(t, thriple, CPU, features, opt, .Aggressive);
+    var targetMachine = llvm.TargetMachine.create(t, thriple, CPU, features, opt, .None);
 
     targetMachine.emitToFile(inter.module, out, .ObjectFile);
 
-    std.log.info("CC lol.o", .{});
+    std.debug.print("CC a.out\n", .{});
 
     var output = try std.ChildProcess.exec(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "gcc", "lol.o", "-lm", "-lncurses", "-lc", "-O3", "test.c" },
+        .argv = &[_][]const u8{ "clang", "lol.o", "-lm", "-lc", "-lGL", "-lglfw", "test.c", "-fstack-protector-all", "-fno-omit-frame-pointer", "-O0" },
     });
 
     if (output.stdout.len != 0)

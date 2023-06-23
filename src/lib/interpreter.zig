@@ -12,6 +12,7 @@ pub const interpreterError = error{
     Undefined,
     Unimplemented,
     BadIndex,
+    BadOp,
 };
 
 pub const Interpreter = struct {
@@ -21,59 +22,76 @@ pub const Interpreter = struct {
         Null,
         Val,
         ConstInt,
+        ConstFloat,
+        ConstArray,
         Array,
         Ptr,
         Type,
         Prop,
         Struct,
+        Opaque,
         ValProc,
         Proc,
     };
 
-    const DefList = std.StringHashMap(*Value);
+    const DefList = std.StringHashMap(*const Value);
 
     const ProcImpl = struct {
         value: FunctionData,
-        args: []*Value,
+        args: []*const Value,
     };
 
     const Value = union(ValueKind) {
         Null: u0,
         Val: struct {
-            value: *llvm.Value,
-            kind: *Value,
+            value: *const llvm.Value,
+            kind: *const Value,
         },
         ConstInt: struct {
             value: usize,
         },
+        ConstFloat: struct {
+            value: f64,
+        },
+        ConstArray: struct {
+            values: []const *const Value,
+            value: *const Value,
+            ptr: *const Value,
+            len: usize,
+        },
         Array: struct {
-            child: *Value,
-            kind: *llvm.Type,
+            child: *const Value,
+            kind: *const llvm.Type,
             count: usize,
         },
         Ptr: struct {
-            child: *Value,
-            kind: *llvm.Type,
+            child: *const Value,
+            kind: *const llvm.Type,
         },
         Type: struct {
-            value: *llvm.Type,
+            value: *const llvm.Type,
         },
         Prop: struct {
             idx: usize,
-            kind: *Value,
+            kind: *const Value,
         },
         Struct: struct {
-            value: *llvm.Type,
-            subDefs: DefList,
+            name: []const u8,
+            value: *const llvm.Type,
+            subDefs: *DefList,
         },
         ValProc: struct {
-            val: *Value,
-            proc: *Value,
+            val: *const Value,
+            proc: *const Value,
+        },
+        Opaque: struct {
+            value: *const llvm.Value,
+            kind: *const llvm.Type,
         },
         Proc: struct {
             parentDefs: *DefList,
             def: parser.Definition,
-            impls: std.ArrayList(ProcImpl),
+            impls: *std.ArrayList(ProcImpl),
             ext: bool,
             inl: bool,
             ctime: bool,
@@ -95,19 +113,31 @@ pub const Interpreter = struct {
             return true;
         }
 
-        pub fn getValue(self: Value, targetType: *llvm.Type) !*llvm.Value {
+        pub fn getName(self: Value) []const u8 {
             return switch (self) {
-                .Val => return self.Val.value,
-                .ValProc => return try self.ValProc.val.getValue(targetType),
-                .Null => return targetType.constNull(),
-                .ConstInt => {
-                    return llvm.Type.constInt(targetType, self.ConstInt.value, .False);
-                },
-                else => return error.InvalidProp,
+                .Ptr => self.Ptr.child.getName(),
+                .Struct => self.Struct.name,
+                else => @tagName(self),
             };
         }
 
-        pub fn getTypeVal(self: Value) !*llvm.Type {
+        pub fn getValue(self: Value, targetType: *const llvm.Type) !*const llvm.Value {
+            return switch (self) {
+                .Val => self.Val.value,
+                .ValProc => try self.ValProc.val.getValue(targetType),
+                .Null => targetType.constNull(),
+                .ConstInt => if (targetType.getTypeKind() == .Float)
+                    llvm.Type.constReal(targetType, @intToFloat(f64, self.ConstInt.value))
+                else
+                    llvm.Type.constInt(targetType, self.ConstInt.value, .False),
+                .ConstFloat => llvm.Type.constReal(targetType, self.ConstFloat.value),
+                .ConstArray => self.ConstArray.ptr.getValue(targetType),
+                .Opaque => self.Opaque.value,
+                else => error.InvalidProp,
+            };
+        }
+
+        pub fn getTypeVal(self: Value) !*const llvm.Type {
             return switch (self) {
                 .Ptr => self.Ptr.kind,
                 .Array => self.Array.kind,
@@ -119,13 +149,13 @@ pub const Interpreter = struct {
     };
 
     const FunctionData = struct {
-        value: ?*llvm.Value,
-        kind: ?*llvm.Type,
-        retKind: ?*Value,
+        value: ?*const llvm.Value,
+        kind: ?*const llvm.Type,
+        retKind: ?*const Value,
 
-        out: ?*llvm.Value,
+        out: ?*const llvm.Value,
         outBlock: ?*llvm.BasicBlock,
-        ctime: ?*Value,
+        ctime: ?*const Value,
         name: []const u8,
     };
 
@@ -140,6 +170,63 @@ pub const Interpreter = struct {
 
     root: parser.Definition,
 
+    pub fn visitOp(self: *Self, func: ?*FunctionData, defs: *DefList, data: []parser.Expression, op: anytype) !*const Value {
+        var a = try self.visitExpression(func, data[0], defs);
+        var b = try self.visitExpression(func, data[1], defs);
+
+        var result = try self.allocator.create(Value);
+
+        if (a.* == .ConstInt and b.* == .ConstInt) {
+            if (@hasDecl(op, "constInt")) {
+                result.* = .{
+                    .ConstInt = .{
+                        .value = op.constInt(a.ConstInt.value, b.ConstInt.value),
+                    },
+                };
+
+                return result;
+            } else {
+                return error.BadOp;
+            }
+        }
+
+        if (a.* == .ConstFloat and b.* == .ConstFloat) {
+            if (@hasDecl(op, "constFloat")) {
+                result.* = .{
+                    .ConstFloat = .{
+                        .value = op.constFloat(a.ConstFloat.value, b.ConstFloat.value),
+                    },
+                };
+
+                return result;
+            } else {
+                return error.BadOp;
+            }
+        }
+
+        if ((try a.Val.kind.getTypeVal()).getTypeKind() == .Float) {
+            if (@hasDecl(op, "varFloat")) {
+                try op.varFloat(self.builder, result, a, b);
+            } else {
+                return error.BadOp;
+            }
+        } else if ((try a.Val.kind.getTypeVal()).getTypeKind() == .Pointer) {
+            if (@hasDecl(op, "varPtr")) {
+                try op.varPtr(self.builder, result, a, b);
+            } else {
+                return error.BadOp;
+            }
+        } else {
+            if (@hasDecl(op, "varInt")) {
+                try op.varInt(self.builder, result, a, b);
+            } else {
+                return error.BadOp;
+            }
+        }
+
+        return result;
+    }
+
     pub fn visitStatement(self: *Self, stmt: parser.Statement, func: ?*FunctionData, defs: *DefList) interpreterError!void {
         switch (stmt.data) {
             .Definition => |data| {
@@ -153,15 +240,23 @@ pub const Interpreter = struct {
             .Return => |data| {
                 if (func == null) return error.InvalidStatement;
 
-                if (func.?.ctime) |ctime| {
-                    var returns = try self.visitExpression(func, data, defs);
-                    ctime.* = returns.*;
+                if (func.?.ctime) |_| {
+                    if (data == null) {
+                        return;
+                    }
+                    var returns = try self.visitExpression(func, data.?, defs);
+                    func.?.ctime = returns;
 
                     return;
                 }
 
                 if (func.?.out != null) {
-                    var returns = try self.visitExpression(func.?, data, defs);
+                    if (data == null) {
+                        _ = self.builder.buildBr(func.?.outBlock.?);
+
+                        return;
+                    }
+                    var returns = try self.visitExpression(func.?, data.?, defs);
                     _ = self.builder.buildStore(try returns.getValue(try func.?.retKind.?.getTypeVal()), func.?.out.?);
 
                     _ = self.builder.buildBr(func.?.outBlock.?);
@@ -169,7 +264,13 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                var returns = try self.visitExpression(func, data, defs);
+                if (data == null) {
+                    _ = self.builder.buildRetVoid();
+
+                    return;
+                }
+
+                var returns = try self.visitExpression(func, data.?, defs);
                 _ = self.builder.buildRet(try returns.getValue(try func.?.retKind.?.getTypeVal()));
 
                 return;
@@ -250,8 +351,18 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn visitExpression(self: *Self, func: ?*FunctionData, expr: parser.Expression, defs: *DefList) interpreterError!*Value {
+    pub fn visitExpression(self: *Self, func: ?*FunctionData, expr: parser.Expression, defs: *DefList) interpreterError!*const Value {
         switch (expr.data) {
+            .ConstFloat => {
+                var result = try self.allocator.create(Value);
+                result.* = .{
+                    .ConstFloat = .{
+                        .value = expr.data.ConstFloat.value,
+                    },
+                };
+
+                return result;
+            },
             .ConstInt => {
                 var result = try self.allocator.create(Value);
                 result.* = .{
@@ -345,6 +456,28 @@ pub const Interpreter = struct {
                     }
                 }
 
+                if (std.mem.eql(u8, data.name, "void")) {
+                    var result = try self.allocator.create(Value);
+                    result.* = .{
+                        .Type = .{
+                            .value = self.context.voidType(),
+                        },
+                    };
+
+                    return result;
+                }
+
+                if (std.mem.eql(u8, data.name, "f32")) {
+                    var result = try self.allocator.create(Value);
+                    result.* = .{
+                        .Type = .{
+                            .value = self.context.floatType(),
+                        },
+                    };
+
+                    return result;
+                }
+
                 if (std.mem.eql(u8, data.name, "null")) {
                     var result = try self.allocator.create(Value);
                     result.* = .{
@@ -370,6 +503,98 @@ pub const Interpreter = struct {
             },
             .Operation => |data| {
                 switch (data.op) {
+                    .ConstOpaque => {
+                        var result = try self.allocator.create(Value);
+                        var values = try self.allocator.alloc(*const llvm.Value, data.values.len);
+                        var types = try self.allocator.alloc(*const llvm.Type, data.values.len);
+                        for (values, types, data.values) |*val, *kind, target| {
+                            const exprVal = try self.visitExpression(func, target, defs);
+                            val.* = try (exprVal.getValue(self.context.intType(32)));
+                            kind.* = val.*.typeOf();
+                        }
+
+                        result.* = .{
+                            .Opaque = .{
+                                .value = self.context.constStruct(values.ptr, @intCast(c_uint, values.len), .False),
+                                .kind = self.context.structType(types.ptr, @intCast(c_uint, types.len), .False),
+                            },
+                        };
+
+                        return result;
+                    },
+                    .ConstArray => {
+                        var kind = try self.visitExpression(func, data.values[0], defs);
+
+                        var result = try self.allocator.create(Value);
+                        var resultPtr = try self.allocator.create(Value);
+                        var items = try self.allocator.alloc(*const llvm.Value, data.values.len - 1);
+                        var values = try self.allocator.alloc(*const Value, data.values.len - 1);
+                        for (items, data.values[1..], values) |*item, val, *value| {
+                            const exprVal = try self.visitExpression(func, val, defs);
+                            item.* = try (exprVal.getValue(try kind.getTypeVal()));
+                            value.* = exprVal;
+                        }
+
+                        var kindData = try self.allocator.create(Value);
+
+                        kindData.* = .{
+                            .Array = .{
+                                .child = kind,
+                                .kind = (try kind.getTypeVal()).arrayType(@intCast(c_uint, data.values.len - 1)),
+                                .count = data.values.len - 1,
+                            },
+                        };
+
+                        var inital = (try kind.getTypeVal()).constArray(items.ptr, @intCast(c_uint, items.len));
+
+                        var ptrKindData = try self.allocator.create(Value);
+                        ptrKindData.* = .{
+                            .Ptr = .{
+                                .kind = self.context.pointerType(0),
+                                .child = kind,
+                            },
+                        };
+
+                        if (func == null) {
+                            resultPtr.* = .{
+                                .Val = .{
+                                    .value = self.module.addGlobal(kindData.Array.kind, "Array"),
+                                    .kind = ptrKindData,
+                                },
+                            };
+
+                            resultPtr.Val.value.setInitializer(inital);
+                        } else {
+                            resultPtr.* = .{
+                                .Val = .{
+                                    .value = self.builder.buildAlloca(kindData.Array.kind, "Array"),
+                                    .kind = ptrKindData,
+                                },
+                            };
+
+                            resultPtr.Val.value.setInitializer(inital);
+                        }
+
+                        var value = try self.allocator.create(Value);
+
+                        value.* = .{
+                            .Val = .{
+                                .value = inital,
+                                .kind = kindData,
+                            },
+                        };
+
+                        result.* = .{
+                            .ConstArray = .{
+                                .value = value,
+                                .ptr = resultPtr,
+                                .values = values,
+                                .len = data.values.len - 1,
+                            },
+                        };
+
+                        return result;
+                    },
                     .Assign => {
                         var a = try self.visitExpression(func, data.values[0], defs);
                         var b = try self.visitExpression(func, data.values[1], defs);
@@ -391,13 +616,54 @@ pub const Interpreter = struct {
                         for (data.values[1..]) |*param| {
                             var index = try self.visitExpression(func, param.*, defs);
 
+                            if (result.* == .ConstArray) {
+                                if (index.* == .ConstInt) {
+                                    result = result.ConstArray.values[index.ConstInt.value];
+                                } else if (index.* == .Val) {
+                                    var ind: []const *const llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
+
+                                    var kind = try self.allocator.create(Value);
+
+                                    kind.* = .{
+                                        .Ptr = .{
+                                            .child = result.ConstArray.ptr.Val.kind.Array.child,
+                                            .kind = self.context.pointerType(0),
+                                        },
+                                    };
+
+                                    var copy = result.ConstArray.ptr;
+                                    var newResult = try self.allocator.create(Value);
+
+                                    newResult.* = Value{
+                                        .Val = .{
+                                            .value = self.builder.buildInBoundsGEP(
+                                                try copy.Val.kind.getTypeVal(),
+                                                copy.Val.value,
+                                                ind.ptr,
+                                                1,
+                                                "AccessArr",
+                                            ),
+                                            .kind = kind,
+                                        },
+                                    };
+
+                                    result = newResult;
+
+                                    kind.Ptr.kind = result.Val.value.typeOf();
+                                } else {
+                                    return error.BadIndex;
+                                }
+
+                                continue;
+                            }
+
                             switch (result.*) {
                                 .Val => {
                                     if (result.Val.kind.* != .Ptr) return error.BadIndex;
 
                                     switch (result.Val.kind.Ptr.child.*) {
                                         .Ptr => {
-                                            var ind: []const *llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
+                                            var ind: []const *const llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
 
                                             var kind = try self.allocator.create(Value);
 
@@ -409,9 +675,9 @@ pub const Interpreter = struct {
                                             };
 
                                             var copy = result;
-                                            result = try self.allocator.create(Value);
+                                            var newResult = try self.allocator.create(Value);
 
-                                            result.* = .{
+                                            newResult.* = .{
                                                 .Val = .{
                                                     .value = self.builder.buildInBoundsGEP(
                                                         try copy.Val.kind.Ptr.child.Ptr.child.getTypeVal(),
@@ -424,10 +690,12 @@ pub const Interpreter = struct {
                                                 },
                                             };
 
+                                            result = newResult;
+
                                             kind.Ptr.kind = result.Val.value.typeOf();
                                         },
                                         .Array => {
-                                            var ind: []const *llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
+                                            var ind: []const *const llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
 
                                             var kind = try self.allocator.create(Value);
 
@@ -439,12 +707,12 @@ pub const Interpreter = struct {
                                             };
 
                                             var copy = result;
-                                            result = try self.allocator.create(Value);
+                                            var newResult = try self.allocator.create(Value);
 
-                                            result.* = .{
+                                            newResult.* = .{
                                                 .Val = .{
                                                     .value = self.builder.buildInBoundsGEP(
-                                                        try copy.Val.kind.Ptr.child.Array.child.getTypeVal(),
+                                                        try copy.Val.kind.Ptr.child.getTypeVal(),
                                                         copy.Val.value,
                                                         ind.ptr,
                                                         1,
@@ -454,10 +722,12 @@ pub const Interpreter = struct {
                                                 },
                                             };
 
+                                            result = newResult;
+
                                             kind.Ptr.kind = result.Val.value.typeOf();
                                         },
                                         .Type => {
-                                            var ind: []const *llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
+                                            var ind: []const *const llvm.Value = &.{try index.*.getValue(self.context.intType(32))};
 
                                             var kind = try self.allocator.create(Value);
 
@@ -469,9 +739,9 @@ pub const Interpreter = struct {
                                             };
 
                                             var copy = result;
-                                            result = try self.allocator.create(Value);
+                                            var newResult = try self.allocator.create(Value);
 
-                                            result.* = .{
+                                            newResult.* = .{
                                                 .Val = .{
                                                     .value = (try copy.Val.kind.Ptr.child.getTypeVal()).arrayType(1).constInBoundsGEP(
                                                         copy.Val.value,
@@ -481,26 +751,50 @@ pub const Interpreter = struct {
                                                     .kind = kind,
                                                 },
                                             };
+
+                                            result = newResult;
+
                                             kind.Ptr.kind = result.Val.value.typeOf();
                                         },
                                         else => return error.BadIndex,
                                     }
                                 },
-                                .Type => {
+                                .Array => {
                                     if (index.* != .ConstInt) return error.BadIndex;
 
                                     var copy = result;
-                                    result = try self.allocator.create(Value);
+                                    var newResult = try self.allocator.create(Value);
 
-                                    result.* = .{
+                                    newResult.* = .{
                                         .Array = .{
                                             .child = copy,
                                             .kind = (try copy.getTypeVal()).arrayType(@intCast(c_uint, index.ConstInt.value)),
                                             .count = index.ConstInt.value,
                                         },
                                     };
+
+                                    result = newResult;
                                 },
-                                else => return error.BadIndex,
+                                .Type => {
+                                    if (index.* != .ConstInt) return error.BadIndex;
+
+                                    var copy = result;
+                                    var newResult = try self.allocator.create(Value);
+
+                                    newResult.* = .{
+                                        .Array = .{
+                                            .child = copy,
+                                            .kind = (try copy.getTypeVal()).arrayType(@intCast(c_uint, index.ConstInt.value)),
+                                            .count = index.ConstInt.value,
+                                        },
+                                    };
+
+                                    result = newResult;
+                                },
+                                else => {
+                                    std.log.info("{s}", .{@tagName(result.*)});
+                                    return error.BadIndex;
+                                },
                             }
                         }
 
@@ -509,14 +803,14 @@ pub const Interpreter = struct {
                     .Call => {
                         var function = try self.visitExpression(func, data.values[0], defs);
 
-                        if (function.* == .Type) {
+                        if (function.* == .Type or function.* == .Ptr) {
                             if (data.values.len != 2) return error.InvalidCast;
 
                             var toCast = try (try self.visitExpression(func, data.values[1], defs)).getValue(try function.getTypeVal());
 
                             var result = try self.allocator.create(Value);
 
-                            switch (function.Type.value.getTypeKind()) {
+                            switch ((try function.getTypeVal()).getTypeKind()) {
                                 .Integer => {
                                     switch (toCast.typeOf().getTypeKind()) {
                                         .Integer => {
@@ -542,6 +836,36 @@ pub const Interpreter = struct {
                                         else => {},
                                     }
                                 },
+                                .Float => {
+                                    switch (toCast.typeOf().getTypeKind()) {
+                                        .Float => {
+                                            result.* = .{
+                                                .Val = .{
+                                                    .value = toCast,
+                                                    .kind = function,
+                                                },
+                                            };
+
+                                            return result;
+                                        },
+                                        else => {},
+                                    }
+                                },
+                                .Pointer => {
+                                    switch (toCast.typeOf().getTypeKind()) {
+                                        .Integer => {
+                                            result.* = .{
+                                                .Val = .{
+                                                    .value = self.builder.buildIntToPtr(toCast, self.context.pointerType(0), "PtrCast"),
+                                                    .kind = function,
+                                                },
+                                            };
+
+                                            return result;
+                                        },
+                                        else => {},
+                                    }
+                                },
                                 else => {},
                             }
                             std.log.info("{s}", .{@tagName(function.Type.value.getTypeKind())});
@@ -557,39 +881,46 @@ pub const Interpreter = struct {
                             function = function.ValProc.proc;
                         }
 
-                        var params = try self.allocator.alloc(*Value, paramCount);
-                        var paramTypes = try self.allocator.alloc(*Value, paramCount);
-                        var callParams = try self.allocator.alloc(*llvm.Value, paramCount);
+                        var params = try self.allocator.alloc(*const Value, paramCount);
+                        var paramTypes = try self.allocator.alloc(*const Value, paramCount);
+                        var callParams = try self.allocator.alloc(*const llvm.Value, paramCount);
                         var idx: usize = 0;
 
                         for (params, paramTypes, 0..) |*param, *ptype, aidx| {
                             param.* = try self.visitExpression(func, data.values[aidx + offset], defs);
                             if (param.*.* == .ConstInt) {
-                                ptype.* = try self.allocator.create(Value);
-                                ptype.*.* = .{
+                                var newPtype = try self.allocator.create(Value);
+                                newPtype.* = .{
                                     .Type = .{
                                         .value = self.context.intType(32),
                                     },
                                 };
+                                ptype.* = newPtype;
                             } else if (param.*.* == .ValProc) {
                                 ptype.* = param.*.ValProc.val.Val.kind;
                                 param.* = param.*.ValProc.val;
                             } else if (param.*.* == .Val) {
                                 ptype.* = param.*.Val.kind;
+                            } else if (param.*.* == .ConstArray) {
+                                ptype.* = param.*.ConstArray.ptr.Val.kind;
+                                param.* = param.*.ConstArray.ptr;
                             } else if (param.*.* == .Null) {
-                                ptype.* = try self.allocator.create(Value);
-                                ptype.*.* = .{
+                                var newPtype = try self.allocator.create(Value);
+                                newPtype.* = .{
                                     .Type = .{
                                         .value = self.context.pointerType(0),
                                     },
                                 };
+                                ptype.* = newPtype;
 
-                                param.*.* = .{
+                                var newParam = try self.allocator.create(Value);
+                                newParam.* = .{
                                     .Val = .{
                                         .value = self.context.pointerType(0).constNull(),
                                         .kind = ptype.*,
                                     },
                                 };
+                                param.* = newParam;
                             } else {
                                 continue;
                             }
@@ -641,6 +972,10 @@ pub const Interpreter = struct {
 
                         var result = try self.allocator.create(Value);
 
+                        if (a.* == .ConstArray) {
+                            return a.ConstArray.value;
+                        }
+
                         if (a.* == .Type or a.* == .Ptr or a.* == .Array or a.* == .Struct) {
                             result.* = .{
                                 .Ptr = .{
@@ -662,140 +997,163 @@ pub const Interpreter = struct {
                         return result;
                     },
                     .Div => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return @divTrunc(a, b);
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                return a / b;
+                            }
 
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildSDiv(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "mul"),
-                            },
-                        };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFDiv(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "div"),
+                                    },
+                                };
+                            }
 
-                        return result;
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildSDiv(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "div"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .Mod => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return @rem(a, b);
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                return @rem(a, b);
+                            }
 
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildSRem(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "mul"),
-                            },
-                        };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFRem(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "rem"),
+                                    },
+                                };
+                            }
 
-                        return result;
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildSRem(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "rem"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .Mul => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return a *% b;
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                return a * b;
+                            }
 
-                        if (a.* == .ConstInt and b.* == .ConstInt) {
-                            result.* = .{
-                                .ConstInt = .{
-                                    .value = a.ConstInt.value * b.ConstInt.value,
-                                },
-                            };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFMul(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "mul"),
+                                    },
+                                };
+                            }
 
-                            return result;
-                        }
-
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildMul(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "mul"),
-                            },
-                        };
-
-                        return result;
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildMul(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "mul"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .Add => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return a +% b;
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                return a + b;
+                            }
 
-                        if (a.* == .ConstInt and b.* == .ConstInt) {
-                            result.* = .{
-                                .ConstInt = .{
-                                    .value = a.ConstInt.value + b.ConstInt.value,
-                                },
-                            };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFAdd(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "add"),
+                                    },
+                                };
+                            }
 
-                            return result;
-                        }
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildAdd(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "add"),
+                                    },
+                                };
+                            }
 
-                        var adds = try b.getValue(try a.Val.kind.getTypeVal());
+                            fn varPtr(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                var adds = builder.buildIntToPtr(try b.getValue(try a.Val.kind.getTypeVal()), try a.Val.kind.getTypeVal(), "offset");
 
-                        if ((try a.Val.kind.getTypeVal()).getTypeKind() == .Pointer) {
-                            adds = self.builder.buildIntToPtr(adds, self.context.pointerType(0), "addAddr");
-                        }
-
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildAdd(a.Val.value, adds, "add"),
-                            },
-                        };
-
-                        return result;
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildAdd(a.Val.value, adds, "addPtr"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .BitOr => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return a | b;
+                            }
 
-                        var result = try self.allocator.create(Value);
-
-                        if (a.* == .ConstInt and b.* == .ConstInt) {
-                            result.* = .{
-                                .ConstInt = .{
-                                    .value = a.ConstInt.value | b.ConstInt.value,
-                                },
-                            };
-
-                            return result;
-                        }
-
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildOr(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "or"),
-                            },
-                        };
-
-                        return result;
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildOr(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "or"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .BitAnd => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return a & b;
+                            }
 
-                        var result = try self.allocator.create(Value);
-
-                        if (a.* == .ConstInt and b.* == .ConstInt) {
-                            result.* = .{
-                                .ConstInt = .{
-                                    .value = a.ConstInt.value & b.ConstInt.value,
-                                },
-                            };
-
-                            return result;
-                        }
-
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildAnd(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "and"),
-                            },
-                        };
-
-                        return result;
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildAnd(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "or"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .BitNot => {
                         var a = try self.visitExpression(func, data.values[0], defs);
@@ -820,69 +1178,124 @@ pub const Interpreter = struct {
                         return result;
                     },
                     .Sub => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                return a -% b;
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                return a - b;
+                            }
 
-                        if (a.* == .ConstInt and b.* == .ConstInt) {
-                            result.* = .{
-                                .ConstInt = .{
-                                    .value = a.ConstInt.value -% b.ConstInt.value,
-                                },
-                            };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFSub(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "sub"),
+                                    },
+                                };
+                            }
 
-                            return result;
-                        }
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildSub(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "sub"),
+                                    },
+                                };
+                            }
 
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildSub(a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "sub"),
-                            },
-                        };
+                            fn varPtr(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                var adds = builder.buildIntToPtr(try b.getValue(try a.Val.kind.getTypeVal()), try a.Val.kind.getTypeVal(), "offset");
 
-                        return result;
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildSub(a.Val.value, adds, "subPtr"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .Equal => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                if (a == b) return 1;
+                                return 0;
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                if (a == b) return 1;
+                                return 0;
+                            }
 
-                        if (a.* == .ConstInt and b.* == .ConstInt) {
-                            result.* = .{
-                                .ConstInt = .{
-                                    .value = if (a.ConstInt.value == b.ConstInt.value) 1 else 0,
-                                },
-                            };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFCmp(.OEQ, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "eq"),
+                                    },
+                                };
+                            }
 
-                            return result;
-                        }
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildICmp(.EQ, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "eq"),
+                                    },
+                                };
+                            }
 
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildICmp(.EQ, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "eq"),
-                            },
-                        };
-
-                        return result;
+                            fn varPtr(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildICmp(.EQ, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "eq"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .NotEqual => {
-                        var a = try self.visitExpression(func, data.values[0], defs);
-                        var b = try self.visitExpression(func, data.values[1], defs);
+                        return try self.visitOp(func, defs, data.values, struct {
+                            fn constInt(a: usize, b: usize) usize {
+                                if (a != b) return 1;
+                                return 0;
+                            }
 
-                        var result = try self.allocator.create(Value);
+                            fn constFloat(a: f64, b: f64) f64 {
+                                if (a != b) return 1;
+                                return 0;
+                            }
 
-                        result.* = .{
-                            .Val = .{
-                                .kind = a.Val.kind,
-                                .value = self.builder.buildICmp(.NE, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "ne"),
-                            },
-                        };
+                            fn varFloat(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildFCmp(.ONE, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "ne"),
+                                    },
+                                };
+                            }
 
-                        return result;
+                            fn varInt(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildICmp(.NE, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "ne"),
+                                    },
+                                };
+                            }
+
+                            fn varPtr(builder: *llvm.Builder, result: *Value, a: *const Value, b: *const Value) !void {
+                                result.* = .{
+                                    .Val = .{
+                                        .kind = a.Val.kind,
+                                        .value = builder.buildICmp(.NE, a.Val.value, try b.getValue(try a.Val.kind.getTypeVal()), "ne"),
+                                    },
+                                };
+                            }
+                        });
                     },
                     .Less => {
                         var a = try self.visitExpression(func, data.values[0], defs);
@@ -917,10 +1330,69 @@ pub const Interpreter = struct {
                     .Access => {
                         var a = try self.visitExpression(func, data.values[0], defs);
 
+                        if (std.mem.eql(u8, data.values[1].data.Ident.name, "LEN")) {
+                            var resulta = try self.allocator.create(Value);
+
+                            resulta.* = .{
+                                .ConstInt = .{
+                                    .value = a.ConstArray.len,
+                                },
+                            };
+
+                            return resulta;
+                        }
+
+                        if (std.mem.eql(u8, data.values[1].data.Ident.name, "PTR")) {
+                            return a.ConstArray.ptr;
+                        }
+
+                        if (std.mem.eql(u8, data.values[1].data.Ident.name, "TYPE")) {
+                            return a.Val.kind;
+                        }
+
+                        if (std.mem.eql(u8, data.values[1].data.Ident.name, "NAME")) {
+                            if (self.strings.get(a.getName())) |result| {
+                                return result;
+                            }
+
+                            var finalStr = try self.allocator.dupe(u8, a.getName());
+                            var strVal = self.context.constString(finalStr.ptr, @intCast(c_uint, finalStr.len), .False);
+
+                            var str = self.module.addGlobal(strVal.typeOf(), "str");
+                            str.setInitializer(strVal);
+
+                            var cKind = try self.allocator.create(Value);
+                            cKind.* = .{
+                                .Type = .{
+                                    .value = self.context.intType(8),
+                                },
+                            };
+
+                            var kind = try self.allocator.create(Value);
+                            kind.* = .{
+                                .Ptr = .{
+                                    .kind = self.context.pointerType(0),
+                                    .child = cKind,
+                                },
+                            };
+
+                            var result = try self.allocator.create(Value);
+                            result.* = .{
+                                .Val = .{
+                                    .value = str,
+                                    .kind = kind,
+                                },
+                            };
+
+                            try self.strings.put(a.getName(), result);
+
+                            return result;
+                        }
+
                         if (std.mem.eql(u8, data.values[1].data.Ident.name, "SIZE")) {
                             var resulta = try self.allocator.create(Value);
 
-                            var ind: []const *llvm.Value = &.{self.context.intType(32).constInt(1, .False)};
+                            var ind: []const *const llvm.Value = &.{self.context.intType(32).constInt(1, .False)};
 
                             var subV = try self.allocator.create(Value);
 
@@ -959,7 +1431,11 @@ pub const Interpreter = struct {
                         }
 
                         if (a.* == .Val) {
-                            if (a.Val.kind.* != .Ptr) return error.Undefined;
+                            if (a.Val.kind.* != .Ptr or a.Val.kind.Ptr.child.* != .Struct) {
+                                std.log.info("{s}", .{data.values[1].data.Ident.name});
+
+                                return error.Undefined;
+                            }
 
                             var def = a.Val.kind.Ptr.child.Struct.subDefs.get(data.values[1].data.Ident.name) orelse {
                                 std.log.info("{s}", .{data.values[1].data.Ident.name});
@@ -1107,13 +1583,15 @@ pub const Interpreter = struct {
                     .Proc = .{
                         .parentDefs = parent,
                         .def = def,
-                        .impls = std.ArrayList(ProcImpl).init(self.allocator),
+                        .impls = try self.allocator.create(std.ArrayList(ProcImpl)),
                         .ext = false,
                         .inl = def.data.Proc.inl,
                         .ctime = ctime,
                         .name = name,
                     },
                 };
+
+                value.*.Proc.impls.* = std.ArrayList(ProcImpl).init(self.allocator);
 
                 try parent.put(def.name, value);
 
@@ -1123,10 +1601,13 @@ pub const Interpreter = struct {
                 var value = try self.allocator.create(Value);
                 value.* = .{
                     .Struct = .{
+                        .name = name,
                         .value = self.context.structCreateNamed(zname),
-                        .subDefs = DefList.init(self.allocator),
+                        .subDefs = try self.allocator.create(DefList),
                     },
                 };
+
+                value.*.Struct.subDefs.* = DefList.init(self.allocator);
 
                 try parent.put(def.name, value);
 
@@ -1136,24 +1617,24 @@ pub const Interpreter = struct {
 
                 while (iter.next()) |defin| {
                     if (defin.value_ptr.*.* != .Prop) {
-                        try subDefs.put(defin.key_ptr.*, defin.value_ptr.*);
+                        try subDefs.*.put(defin.key_ptr.*, defin.value_ptr.*);
                     }
                 }
 
                 if (parent.get("Self") != null)
-                    try subDefs.put("Parent", parent.get("Self") orelse unreachable);
+                    try subDefs.*.put("Parent", parent.get("Self") orelse unreachable);
 
-                try subDefs.put("Self", value);
+                try subDefs.*.put("Self", value);
 
                 var valuePropIdx: usize = 0;
 
                 for (data.subDefs) |subdef| {
-                    try self.visitDefinition(null, subDefs, &valuePropIdx, subdef, root, name);
+                    try self.visitDefinition(null, subDefs.*, &valuePropIdx, subdef, root, name);
                 }
 
-                iter = subDefs.iterator();
+                iter = subDefs.*.iterator();
 
-                var props = try self.allocator.alloc(*llvm.Type, valuePropIdx);
+                var props = try self.allocator.alloc(*const llvm.Type, valuePropIdx);
 
                 while (iter.next()) |entry| {
                     if (entry.value_ptr.*.* == .Prop) {
@@ -1182,12 +1663,14 @@ pub const Interpreter = struct {
                                 },
                             },
                         },
-                        .impls = std.ArrayList(ProcImpl).init(self.allocator),
+                        .impls = try self.allocator.create(std.ArrayList(ProcImpl)),
                         .ext = true,
                         .inl = false,
                         .ctime = false,
                     },
                 };
+
+                value.*.Proc.impls.* = std.ArrayList(ProcImpl).init(self.allocator);
 
                 try parent.put(def.name, value);
 
@@ -1196,7 +1679,7 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn implement(self: *Self, parent: ?*FunctionData, def: *Value, name: []const u8, args: []const *Value, predefs: ?*DefList) interpreterError!FunctionData {
+    pub fn implement(self: *Self, parent: ?*FunctionData, def: *const Value, name: []const u8, args: []const *const Value, predefs: ?*DefList) interpreterError!FunctionData {
         if (def.* != .Proc) return error.InvalidFunc;
 
         for (def.Proc.impls.items) |impl| {
@@ -1227,8 +1710,6 @@ pub const Interpreter = struct {
         }
 
         if (def.Proc.ctime) {
-            std.log.info("CTIME - {s}", .{name});
-
             var copy = try self.allocator.create(FunctionData);
             copy.* = .{
                 .value = null,
@@ -1248,8 +1729,6 @@ pub const Interpreter = struct {
                 try self.visitStatement(stmt, copy, &subDefs);
             }
 
-            std.log.info("Done - {s}", .{name});
-
             return copy.*;
         }
 
@@ -1257,7 +1736,6 @@ pub const Interpreter = struct {
         var kind = try out.getTypeVal();
 
         if (def.Proc.inl and parent != null) {
-            std.log.info("Inline - {s}", .{name});
             var outData = self.builder.buildAlloca(kind, try self.allocator.dupeZ(u8, name));
             var resultBB = self.context.appendBasicBlock(parent.?.value.?, "inlineResult");
 
@@ -1283,9 +1761,7 @@ pub const Interpreter = struct {
             return copy.*;
         }
 
-        std.log.info("Impl - {s}", .{name});
-
-        var argsTypes = try self.allocator.alloc(*llvm.Type, args.len);
+        var argsTypes = try self.allocator.alloc(*const llvm.Type, args.len);
 
         var isVarArg = false;
         var argIdx: usize = 0;
@@ -1326,13 +1802,11 @@ pub const Interpreter = struct {
         };
 
         try def.Proc.impls.append(.{
-            .args = try self.allocator.dupe(*Value, args),
+            .args = try self.allocator.dupe(*const Value, args),
             .value = result,
         });
 
         if (def.Proc.ext) {
-            std.log.info("Done - {s}", .{name});
-
             return result;
         }
 
@@ -1340,6 +1814,11 @@ pub const Interpreter = struct {
 
         for (def.Proc.def.data.Proc.in, 0..) |paramName, idx| {
             var tmpResult = try self.allocator.create(Value);
+            if (args.len <= idx) {
+                std.log.info("{s}", .{name});
+
+                return error.BadIndex;
+            }
             if (args[idx].* == .ConstInt) {
                 var tmpKind = try self.allocator.create(Value);
 
@@ -1383,8 +1862,6 @@ pub const Interpreter = struct {
         }
 
         self.builder.positionBuilderAtEnd(oldBB);
-
-        std.log.info("Done - {s}", .{name});
 
         return result;
     }
@@ -1436,7 +1913,7 @@ pub const Interpreter = struct {
 
                 var params: [2]*Value = .{ argc, argv };
 
-                _ = try self.implement(null, def, "main", &params, &root.Struct.subDefs);
+                _ = try self.implement(null, def, "main", &params, root.Struct.subDefs);
 
                 return;
             }

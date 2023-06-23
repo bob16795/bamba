@@ -13,7 +13,9 @@ pub const Scanner = struct {
     line: usize = 1,
     col: usize = 0,
 
-    pub fn init(src: []const u8) Self {
+    pub fn init(file: []const u8, src: []const u8) Self {
+        std.debug.print("BAM {s}\n", .{file});
+
         return Scanner{
             .src = src,
             .start = src.ptr,
@@ -37,6 +39,7 @@ pub const Scanner = struct {
             '|' => self.makeToken(.BAR),
             '+' => self.makeToken(.PLUS),
             '.' => self.makeToken(.DOT),
+            '$' => self.makeToken(.DOLLAR),
             '{' => self.makeToken(.LEFT_BRACE),
             '}' => self.makeToken(.RIGHT_BRACE),
             '(' => self.makeToken(.LEFT_PAREN),
@@ -123,7 +126,7 @@ pub const Scanner = struct {
             _ = self.advance();
             while (std.ascii.isDigit(self.peek())) _ = self.advance();
         }
-        return self.makeToken(.NUMBER);
+        return self.makeToken(if (std.mem.containsAtLeast(u8, self.currentLexeme(), 1, ".")) .FLOAT else .NUMBER);
     }
 
     fn identifier(self: *Self) Token {
@@ -155,6 +158,7 @@ pub const Scanner = struct {
         if (eql(u8, lexeme, "struct")) return .STRUCT;
         if (eql(u8, lexeme, "inline")) return .INLINE;
         if (eql(u8, lexeme, "import")) return .IMPORT;
+        if (eql(u8, lexeme, "embed")) return .EMBED;
         if (eql(u8, lexeme, "const")) return .CONST;
         if (eql(u8, lexeme, "while")) return .WHILE;
         if (eql(u8, lexeme, "proc")) return .PROC;
@@ -219,6 +223,7 @@ pub const Scanner = struct {
         SEMI_COLON,
         AMPERSAND,
         PERCENT,
+        DOLLAR,
         TILDE,
         COLON,
         COMMA,
@@ -246,6 +251,7 @@ pub const Scanner = struct {
         INLINE,
         STRUCT,
         IMPORT,
+        EMBED,
         CONST,
         WHILE,
         PROC,
@@ -260,6 +266,7 @@ pub const Scanner = struct {
         IDENTIFIER,
         STRING,
         NUMBER,
+        FLOAT,
         CHAR,
 
         // Control
