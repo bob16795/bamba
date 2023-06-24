@@ -1,0 +1,28 @@
+def std: import "std/std.bam";
+def printf: extern -> i32;
+def exit: extern -> i32;
+def strlen: extern -> i32;
+def scanner: import "compiler/scanner.bam";
+def parser: import "compiler/parser.bam";
+
+def value: const "def main: proc -> i32 { return 1 - 1; };";
+
+def main: proc argc argv -> i32 {
+    def scan: var scanner.Scanner;
+    def psr: var parser.Parser;
+
+    scan = scanner.Scanner.init("Memory", value, strlen(value));
+    psr = parser.Parser.init(scan);
+
+    def result: var parser.DefinitionResult;
+    result = psr.parseFile();
+
+    if (result.getErr() != null) {
+       printf("Error: %s\n", *result.data);
+       exit(0);
+    };
+
+    result.getOk().print("");
+
+    return 0;
+};

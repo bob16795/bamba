@@ -85,7 +85,7 @@ pub fn main() !void {
 
     var output = try std.ChildProcess.exec(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "clang", "lol.o", "-lm", "-lc", "-lGL", "-lglfw", "test.c", "-fstack-protector-all", "-fno-omit-frame-pointer", "-O0" },
+        .argv = &[_][]const u8{ "clang", "lol.o", "-lm", "-lc", "-lGL", "-lglfw", "test.c", "-fstack-protector-all", "-fno-omit-frame-pointer", "-O3", "stb_image.c" },
     });
 
     if (output.stdout.len != 0)

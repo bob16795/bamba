@@ -1,0 +1,26 @@
+def Texture: struct {
+  def id: prop u32;
+  def size: prop Engine.Imports.Vecs.Vec2(i32);
+
+  def init: proc file -> Texture {
+    def result: var Texture;
+
+    def channels: var u32;
+    def data: var *Engine.Externs.STBI.Image;
+
+    data = Engine.Externs.STBI.stbi_load(file, result.size.x, result.size.y, channels, 4);
+
+    Engine.Externs.GL.glGenTextures(1, result.id);
+    Engine.Externs.GL.glBindTexture(3553, *result.id);
+    Engine.Externs.GL.glTexParameteri(3553, 10241, 9728);
+    Engine.Externs.GL.glTexParameteri(3553, 10240, 9728);
+
+    Engine.Externs.GL.glTexImage2D(3553, 0, 6408, *result.size.x, *result.size.y, 0, 6408, 5121, *data);
+    Engine.Externs.GL.glGenerateMipmap(3553);
+
+    Engine.Externs.STBI.stbi_image_free(*data);
+
+    return *result;
+  };
+};
+

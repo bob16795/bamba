@@ -1,0 +1,19 @@
+def Rect: proc T -> CTIME {
+    def RectImpl: struct {
+        def pos: prop Engine.Imports.Vecs.Vec2(T);
+        def size: prop Engine.Imports.Vecs.Vec2(T);
+
+        def init: proc x y w h -> RectImpl {
+            def result: var RectImpl;
+
+            result.pos.x = x;
+            result.pos.y = y;
+            result.size.x = w;
+            result.size.y = h;
+
+            return *result;
+        };
+    };
+
+    return RectImpl;
+};

@@ -1,10 +1,5 @@
 def Buffer: import "editor/buffer.bam";
 
-def Settings: struct {
-    def TABSIZE: const 2;
-    def NUMBERLEN: const 4;
-};
-
 def defaultCallback: proc a b c -> i32 { return 0; };
 
 def instance: var *Self;
@@ -91,14 +86,56 @@ def Terminal: struct {
 };
 
 def Input: struct {
-    def Modes: struct {
-        def Normal: const 0;
+    def Mode: struct {
+        def Normal: const u8(0);
+        def Insert: const u8(1);
+    };
+
+    def Action: struct {
+        def SetMode: const u8(0);
+        def NewLine: const u8(1);
+        def Open: const u8(2);
+        def Save: const u8(3);
+        def Search: const u8(4);
+
+        def kind: prop u8;
+        def i: prop u8;
+        def s: prop *u8;
+
+        def doAction: proc action ed -> i32 {
+            if (*action.kind == SetMode) {
+                ed.input.mode = *action.i;
+
+                return 1;
+            };
+            if (*action.kind == NewLine) {
+                Editor.Input.insertNewline(ed);
+
+                ed.input.mode = *action.i;
+
+                return 1;
+            };
+            if (*action.kind == Open) {
+                Editor.File.open(ed, null);
+
+                return 0;
+            };
+
+            return 0;
+        };
+    };
+
+
+    def Binding: struct {
+        def mode: prop u8;
+        def keys: prop *u32;
+        def action: prop Action;
     };
 
     def init: proc -> Input {
         def result: var Input;
 
-        result.buffer = std.ArrayList(Key).init();
+        result.buffer = std.ArrayList(u32).init();
         result.mode = 0;
 
         return *result;
@@ -107,6 +144,7 @@ def Input: struct {
     def Key: struct {
         def value: prop u32;
 
+        def ESCAPE: const '\e';
         def BACKSPACE: const 127;
 
         def ARROWUP: const 1000;
@@ -125,8 +163,25 @@ def Input: struct {
         def SHIFTARROWLEFT: const 1013;
         def SHIFTARROWRIGHT: const 1014;
 
-        def CTRL: inline key -> i32 {
+        def CTRL: proc key -> CTIME {
             return key & 31;
+        };
+
+        def toString: proc key -> *u8 {
+            if (*key.value == ARROWUP) {
+                return "UP";
+            };
+            if (*key.value == ARROWDOWN) {
+                return "DOWN";
+            };
+            if (*key.value == ARROWLEFT) {
+                return "LEFT";
+            };
+            if (*key.value == ARROWRIGHT) {
+                return "RIGHT";
+            };
+
+            return key;
         };
     };
 
@@ -210,52 +265,103 @@ def Input: struct {
             Externs.exit(0);
         };
 
-        ed.input.buffer.append(c);
-        
+        ed.input.buffer.append(*c.value);
+
         def processed: var u1;
         processed = 0;
 
         processed = *processed | moveCursor(ed, c);
 
-        if (*c.value == Key.CTRL('o')) {
-            Editor.File.open(ed, null);
+        def i: var i32;
+        def j: var i32;
+        i = 0;
 
-            processed = 1;
-        };
+        def good: var u1;
+        def didSomething: var u1;
+        didSomething = 0;
+        good = 0;
 
-        if (*c.value == Key.CTRL('s')) {
-            Editor.File.save(ed, *buffer.fileName);
+        while (*i < Editor.Settings.INPUT.LEN & *good == 0) {
+            good = 1;
 
-            processed = 1;
-        };
+            def check: const (Editor.Settings.INPUT.PTR + Input.Binding.SIZE * *i);
 
-        if (*c.value == Key.CTRL('a')) {
-            if (*ed.currentBuffer != 0) {
-                ed.currentBuffer = *ed.currentBuffer - 1;
+            if (*ed.input.mode == *check.mode) {
+                j = 0;
+                while (*(*check.keys + *j * i32.SIZE) != 0) {
+                    if (*j > *ed.input.buffer.len) {
+                        good = 0;
+                    } else {
+                        if (*(*check.keys + *j * i32.SIZE) != *(*ed.input.buffer.items + *j * i32.SIZE)) {
+                            good = 0;
+                        };
+                    };
+
+                    j = *j + 1;
+                };
+                if (*j != *ed.input.buffer.len) {
+                   good = 0;
+                };
+            } else {
+                good = 0;
             };
 
-            processed = 1;
-        };
-
-        if (*c.value == Key.CTRL('d')) {
-            if (*ed.currentBuffer != *ed.buffers.len - 1) {
-                ed.currentBuffer = *ed.currentBuffer + 1;
+            if (*good != 0) {
+                if (check.action.doAction(ed) == 0) {
+                   Editor.Display.StatusBar.showMessage(ed.statusBar, "%d", *check.action.kind);
+                };
+                ed.input.buffer.len = 0;
+                didSomething = 1;
             };
 
-            processed = 1;
+            i = *i + 1;
         };
 
-        if (*c.value == Key.CTRL('b')) {
-            newBuffer(ed);
-
-            processed = 1;
+        if (*didSomething == 0) {
+            ed.input.buffer.len = 0;
+        } else {
+            return 0;
         };
 
-        if (*c.value == Key.CTRL('f')) {
-            Editor.Search.find(ed);
+        //if (*c.value == Key.CTRL('o')) {
+        //    Editor.File.open(ed, null);
 
-            processed = 1;
-        };
+        //    processed = 1;
+        //};
+
+        //if (*c.value == Key.CTRL('s')) {
+        //    Editor.File.save(ed, *buffer.fileName);
+
+        //    processed = 1;
+        //};
+
+        //if (*c.value == Key.CTRL('a')) {
+        //    if (*ed.currentBuffer != 0) {
+        //        ed.currentBuffer = *ed.currentBuffer - 1;
+        //    };
+
+        //    processed = 1;
+        //};
+
+        //if (*c.value == Key.CTRL('d')) {
+        //    if (*ed.currentBuffer != *ed.buffers.len - 1) {
+        //        ed.currentBuffer = *ed.currentBuffer + 1;
+        //    };
+
+        //    processed = 1;
+        //};
+
+        //if (*c.value == Key.CTRL('b')) {
+        //    newBuffer(ed);
+
+        //    processed = 1;
+        //};
+
+        //if (*c.value == Key.CTRL('f')) {
+        //    Editor.Search.find(ed);
+
+        //    processed = 1;
+        //};
 
         if (*c.value == '\r') {
             insertNewline(ed);
@@ -486,7 +592,7 @@ def Input: struct {
         return 0;
     };
     
-    def buffer: prop std.ArrayList(Key);
+    def buffer: prop std.ArrayList(i32);
     def mode: prop i8;
 };
 
@@ -563,7 +669,7 @@ def Display: struct {
                 bufIdx = *bufIdx + 1;
             };
 
-            len = Externs.snprintf(status, 80, "| %.20s %s", *filename, *dirty);
+            len = Externs.snprintf(status, 80, "| %.20s %s %d", *filename, *dirty, *ed.input.mode);
 
             if (*len > *ed.cols - *total) {
                 len = *ed.cols - *total;
@@ -1079,3 +1185,4 @@ def currentBuffer: prop u32;
 def rows: prop u32;
 def cols: prop u32;
 
+def Settings: import "editor/settings.bam";

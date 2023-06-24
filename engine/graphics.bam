@@ -1,0 +1,38 @@
+def GFXContext: struct {
+    def win: prop *Externs.GLFW.Win;
+    def bg: prop Engine.Imports.Vecs.Color;
+    def size: prop Engine.Imports.Vecs.Vec2(i32);
+
+    def init: proc title -> GFXContext {
+        def result: var GFXContext;
+        if (~Engine.Externs.GLFW.glfwInit()) {
+            printf("Could not init glfw");
+            exit(1);
+        };
+
+        result.win = Engine.Externs.GLFW.glfwCreateWindow(640, 480, title, null, null);
+
+        Engine.Externs.GLFW.glfwMakeContextCurrent(*result.win);
+        Engine.Externs.GLFW.glfwSwapInterval(1);
+        Engine.Externs.GLFW.glfwGetFramebufferSize(*result.win, result.size.x, result.size.y);
+
+        result.bg.r = 0.0;
+        result.bg.g = 0.0;
+        result.bg.b = 0.0;
+        result.bg.a = 1.0;
+
+        return *result;
+    };
+
+    def poll: proc self -> u1 {
+        Engine.Externs.GLFW.glfwPollEvents();
+        return ~Engine.Externs.GLFW.glfwWindowShouldClose(*self.win);
+    };
+
+    def swap: proc self -> void {
+        Engine.Externs.GLFW.glfwSwapBuffers(*self.win);
+        Engine.Externs.GL.glClearColor(*self.bg.r, *self.bg.g, *self.bg.b, *self.bg.a);
+        Engine.Externs.GL.glClear(16384);
+        return;
+    };
+};

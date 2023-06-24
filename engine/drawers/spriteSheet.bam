@@ -1,0 +1,78 @@
+def SpriteSheet: struct {
+  def texture: prop *Engine.Imports.Texture.Texture;
+  def shader: prop *Engine.Imports.Shader.Shader;
+
+  def dest: prop Engine.Imports.Rects.Rect(f32);
+  def grid: prop Engine.Imports.Vecs.Vec2(u32);
+  def current: prop Engine.Imports.Vecs.Vec2(u32);
+
+  def init: proc dest w h -> SpriteSheet {
+      def result: var SpriteSheet;  
+
+      result.dest = dest;
+      result.grid.x = w;
+      result.grid.y = h;
+      result.current.x = 0;
+      result.current.y = 0;
+
+      return *result;
+  };
+
+  def getVerts: proc self -> std.ArrayList(Engine.Imports.SpriteBatch.SpriteBatch.Vert) {
+      def result: var std.ArrayList(Engine.Imports.SpriteBatch.SpriteBatch.Vert);
+      def tmp: var Engine.Imports.SpriteBatch.SpriteBatch.Vert;
+      tmp = ${f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0)};
+      
+      result = std.ArrayList(Engine.Imports.SpriteBatch.SpriteBatch.Vert).init();
+
+      def ax: const *self.dest.pos.x; 
+      def ay: const *self.dest.pos.y; 
+
+      def bx: const *self.dest.pos.x + *self.dest.size.x;
+      def by: const *self.dest.pos.y + *self.dest.size.y;      
+
+      def uax: const f32(1.0) / f32(*self.grid.x) * f32(*self.current.x); 
+      def uay: const f32(1.0) / f32(*self.grid.y) * f32(*self.current.y); 
+
+      def ubx: const f32(1.0) / f32(*self.grid.x) * f32(*self.current.x + 1); 
+      def uby: const f32(1.0) / f32(*self.grid.y) * f32(*self.current.y + 1); 
+
+      tmp.x = ax;
+      tmp.y = ay;
+      tmp.u = uax;
+      tmp.v = uay;
+      result.append(*tmp);
+
+      tmp.x = bx;
+      tmp.y = by;
+      tmp.u = ubx;
+      tmp.v = uby;
+      result.append(*tmp);
+
+      tmp.x = ax;
+      tmp.y = by;
+      tmp.u = uax;
+      tmp.v = uby;
+      result.append(*tmp);
+
+      tmp.x = ax;
+      tmp.y = ay;
+      tmp.u = uax;
+      tmp.v = uay;
+      result.append(*tmp);
+
+      tmp.x = bx;
+      tmp.y = by;
+      tmp.u = ubx;
+      tmp.v = uby;
+      result.append(*tmp);
+
+      tmp.x = bx;
+      tmp.y = ay;
+      tmp.u = ubx;
+      tmp.v = uay;
+      result.append(*tmp);
+
+      return *result; 
+  };
+};

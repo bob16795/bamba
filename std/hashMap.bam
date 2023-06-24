@@ -47,7 +47,7 @@ def HashMap: proc K V -> CTIME {
             return *result;
         };
 
-        def deinit: proc self -> i32 {
+        def deinit: proc self -> void {
             def i: var i32;
             i = 0;
 
@@ -63,10 +63,10 @@ def HashMap: proc K V -> CTIME {
 
             std.mem.Allocator.free(*self.items);
 
-            return 0;
+            return;
         };
 
-        def put: proc self key value -> i32 {
+        def put: proc self key value -> void {
             def index: const HashKey(key);
 
             def current: const (*self.items + index * (*Item).SIZE);
@@ -78,7 +78,7 @@ def HashMap: proc K V -> CTIME {
                 // TODO: collision
             };
 
-            return 0;
+            return;
         };
     };
 

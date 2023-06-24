@@ -1,7 +1,14 @@
 #include <signal.h>
+#include <stdio.h>
 
-void doResize(int dummy);
+double glfwGetTime();
 
-void setupSignals() {
-  signal(SIGWINCH, doResize);
+float getTime() {
+  return (float)glfwGetTime();
 }
+
+//void Editor_doResize(int dummy);
+//
+//void setupSignals() {
+//  signal(SIGWINCH, Editor_doResize);
+//}

@@ -1,0 +1,163 @@
+def SpriteBatch: struct {
+    def Vert: struct {
+        def x: prop f32;
+        def y: prop f32;
+        def z: prop f32;
+        def u: prop f32;
+        def v: prop f32;
+        def r: prop f32;
+        def g: prop f32;
+        def b: prop f32;
+        def a: prop f32;
+    };
+
+    def SBQueueEntry: struct {
+        def update: prop u1;
+        def hash: prop u64;
+        def tex: prop *Engine.Imports.Texture.Texture;
+        def shader: prop *Engine.Imports.Shader.Shader;
+        def verts: prop std.ArrayList(Vert);
+        
+        def getHash: proc entry -> i64 {
+            def result: var i64;
+            def data: var *u8;
+            def idx: var i32;
+            idx = 0;
+            
+            result = 5381;
+
+            data = *entry.verts.items;
+
+            while (*idx < *entry.verts.len * Vert.SIZE) {
+                result = *result * (32) + i64(*(data + *idx));
+
+                idx = *idx + 1;
+            };
+
+            return *result;
+        };
+    };
+
+    def prevQueue: prop std.ArrayList(SBQueueEntry);
+    def currQueue: prop std.ArrayList(SBQueueEntry);
+
+    def buffers: prop std.ArrayList(u32);
+    def size: prop Engine.Imports.Vecs.Vec2(f32);
+
+    def init: proc -> SpriteBatch {
+        def result: var SpriteBatch;
+
+        result.buffers = std.ArrayList(u32).init();
+        result.prevQueue = std.ArrayList(SBQueueEntry).init();
+        result.currQueue = std.ArrayList(SBQueueEntry).init();
+
+        return *result;
+    };
+
+    def deinit: proc sb -> void {
+        sb.buffers.deinit();
+        sb.currQueue.deinit();
+        sb.prevQueue.deinit();
+        
+        return;
+    };
+
+    def draw: proc sb drawer -> void {
+        def entry: var SBQueueEntry;
+
+        entry.update = 1;
+        entry.tex = *drawer.texture;
+        entry.shader = *drawer.shader;
+        entry.verts = drawer.getVerts();
+
+        sb.currQueue.append(*entry);
+
+        return;
+    };
+    
+    def blit: proc sb -> void {
+        def idx: var i32;
+        idx = 0;
+
+        //while (*idx < *sb.currQueue.len) {
+        //    def entry: const sb.currQueue.getEntry(*idx);
+        //    entry.update = 1;
+        //    entry.hash = entry.getHash();
+        //    if (*idx < *sb.prevQueue.len) {
+        //        def prevEntry: const sb.prevQueue.getEntry(*idx);
+        //        entry.update = *entry.hash != *prevEntry.hash;
+        //    };
+
+        //    idx = *idx + 1;
+        //};
+
+        Engine.Externs.GL.glEnable(3042);
+        Engine.Externs.GL.glBlendFunc(770, 771);
+        
+        idx = 0;
+        if (*sb.buffers.len != *sb.currQueue.len) {
+            def target: const *sb.currQueue.len;
+
+            if (target < *sb.buffers.len) {
+                Engine.Externs.GL.glDeleteBuffers(*sb.currQueue.len - target, sb.buffers.getEntry(*sb.buffers.len - target));
+            };
+
+
+            sb.buffers.ensureTotalCapacity(target);
+
+            if (target > *sb.buffers.len) {
+                Engine.Externs.GL.glGenBuffers(target - *sb.buffers.len, sb.buffers.getEntry(*sb.buffers.len));
+            };
+
+            sb.buffers.len = target;
+        };
+
+        def Context: struct {
+            def shader: prop *Engine.Imports.Shader.Shader;
+            def texture: prop *Engine.Imports.Texture.Texture;
+        };
+
+        def ctx: var Context;
+        ctx.texture = null;
+        ctx.shader = null;
+        idx = 0;
+
+        while (*idx < *sb.currQueue.len) {
+            def entry: const sb.currQueue.getEntry(*idx);
+            if (*ctx.texture != *entry.tex) {
+                Engine.Externs.GL.glBindTexture(3553, *(*entry.tex).id);
+                ctx.texture = *entry.tex;
+            };
+            
+            if (*ctx.shader != *entry.shader) {
+                Engine.Externs.GL.glUseProgram(*(*entry.shader).id);
+                ctx.shader = *entry.shader;
+            };
+
+            Engine.Externs.GL.glBindBuffer(34962, *sb.buffers.getEntry(*idx));
+
+            if (*entry.update) {
+                Engine.Externs.GL.glBufferData(34962, *entry.verts.len * Vert.SIZE, *entry.verts.items, 35048);
+            };
+
+            Engine.Externs.GL.glVertexAttribPointer(0, 3, 5126, 0, Vert.SIZE, (*void)(f32.SIZE * 0));
+            Engine.Externs.GL.glVertexAttribPointer(1, 2, 5126, 0, Vert.SIZE, (*void)(f32.SIZE * 3));
+            Engine.Externs.GL.glVertexAttribPointer(2, 4, 5126, 0, Vert.SIZE, (*void)(f32.SIZE * 5));
+            Engine.Externs.GL.glEnableVertexAttribArray(0);
+            Engine.Externs.GL.glEnableVertexAttribArray(1);
+            Engine.Externs.GL.glEnableVertexAttribArray(2);
+
+            Engine.Externs.GL.glDrawArrays(4, 0, *entry.verts.len);
+
+            idx = *idx + 1;
+        };
+
+        // TODO: free prevqueue items
+        
+        sb.prevQueue.deinit();
+        sb.prevQueue = *sb.currQueue;
+        sb.currQueue = std.ArrayList(SBQueueEntry).init();
+
+        return;
+    };
+};

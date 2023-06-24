@@ -1,0 +1,50 @@
+def Input: struct {
+  def KEY_UP: const 265;
+  def KEY_DOWN: const 264;
+  def KEY_LEFT: const 263;
+  def KEY_RIGHT: const 262;
+  
+  def KEY_W: const 87;
+  def KEY_A: const 65;
+  def KEY_S: const 83;
+  def KEY_D: const 68;
+
+  def instance: var *Input;
+  def dir: prop Engine.Imports.Vecs.Vec2(i8);
+
+  def keyCallback: proc window key scancode action mods -> void {
+    def adds: var Engine.Imports.Vecs.Vec2(i8);
+    adds.x = 0;
+    adds.y = 0;
+
+    if (key == KEY_LEFT) { adds.x = 0 - 1; };
+    if (key == KEY_RIGHT) { adds.x = 1; };
+    if (key == KEY_UP) { adds.y = 0 - 1; };
+    if (key == KEY_DOWN) { adds.y = 1; };
+
+    if (key == KEY_A) { adds.x = 0 - 1; };
+    if (key == KEY_D) { adds.x = 1; };
+    if (key == KEY_W) { adds.y = 0 - 1; };
+    if (key == KEY_S) { adds.y = 1; };
+
+    if (action == 0) {
+      (*instance).dir.x = *(*instance).dir.x - *adds.x;
+      (*instance).dir.y = *(*instance).dir.y - *adds.y;
+    } else {
+      if (action == 1) {
+        (*instance).dir.x = *(*instance).dir.x + *adds.x;
+        (*instance).dir.y = *(*instance).dir.y + *adds.y;
+      };
+    };
+
+    return;
+  };
+
+  def init: proc ctx -> void {
+    instance = std.mem.Allocator.allocate(Input.SIZE);
+
+    Engine.Externs.GLFW.glfwSetKeyCallback(*ctx.win, keyCallback.IMPL(*Engine.Externs.GLFW.Win, i32, i32, i32, i32));
+
+    return;
+  };
+};

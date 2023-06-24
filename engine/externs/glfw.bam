@@ -1,0 +1,12 @@
+def Win: struct {};
+
+def glfwInit: extern -> u1;
+def glfwCreateWindow: extern -> *Win;
+def glfwMakeContextCurrent: extern -> void;
+def glfwSwapInterval: extern -> void;
+def glfwGetFramebufferSize: extern -> void;
+def glfwWindowShouldClose: extern -> u1;
+def glfwPollEvents: extern -> void;
+def glfwSwapBuffers: extern -> void;
+def getTime: extern -> f32;
+def glfwSetKeyCallback: extern -> void;

@@ -1,0 +1,44 @@
+def Mat4: proc T -> CTIME {
+  def Mat4Impl: struct {
+    def data: prop T[4][4];
+
+    def lookAt: proc eye center up -> Mat4Impl {
+      def f: const center.sub(eye).normalize();
+      def s: const f.cross(up).normalize();
+      def u: const s.cross(f);
+
+      def result: var Mat4Impl;
+
+      return *result; 
+    };
+    
+    def ortho: proc l r b t n f -> Mat4Impl {
+      def result: var Mat4Impl;
+
+      (*f32)(result.data) + i32(0 ) * f32.SIZE = f32(2.0) / (r - l);
+      (*f32)(result.data) + i32(1 ) * f32.SIZE = 0.0;
+      (*f32)(result.data) + i32(2 ) * f32.SIZE = 0.0;
+      (*f32)(result.data) + i32(3 ) * f32.SIZE = 0.0;
+                         
+      (*f32)(result.data) + i32(4 ) * f32.SIZE = 0.0;
+      (*f32)(result.data) + i32(5 ) * f32.SIZE = f32(2.0) / (t - b);
+      (*f32)(result.data) + i32(6 ) * f32.SIZE = 0.0;
+      (*f32)(result.data) + i32(7 ) * f32.SIZE = 0.0;
+                         
+      (*f32)(result.data) + i32(8 ) * f32.SIZE = 0.0;
+      (*f32)(result.data) + i32(9 ) * f32.SIZE = 0.0;
+      (*f32)(result.data) + i32(10) * f32.SIZE = f32(0.0 - 2.0) / (f - n);
+      (*f32)(result.data) + i32(11) * f32.SIZE = 0.0;
+                         
+      (*f32)(result.data) + i32(12) * f32.SIZE = (f32(0.0) - (r + l)) / (r - l);
+      (*f32)(result.data) + i32(13) * f32.SIZE = (f32(0.0) - (t + b)) / (t - b);
+      (*f32)(result.data) + i32(14) * f32.SIZE = (f32(0.0) - (f + n)) / (f - n);
+      (*f32)(result.data) + i32(15) * f32.SIZE = 1.0;
+
+      return *result; 
+    };
+  };
+
+  return Mat4Impl;
+};
+

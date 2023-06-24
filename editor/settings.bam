@@ -1,0 +1,16 @@
+def TABSIZE: const 2;
+def NUMBERLEN: const 4;
+
+def Modes: const Editor.Input.Mode;
+def Actions: const Editor.Input.Action;
+def Keys: const Editor.Input.Key;
+
+def INPUT: const $[Editor.Input.Binding:
+    ${Modes.Normal, $[u32: 'i', 0].PTR, ${Actions.SetMode, Modes.Insert, ""}},
+    ${Modes.Normal, $[u32: 'o', 0].PTR, ${Actions.NewLine, Modes.Insert, ""}},
+    ${Modes.Normal, $[u32: '/', 0].PTR, ${Actions.Search, Modes.Insert, ""}},
+    ${Modes.Normal, $[u32: Keys.CTRL('o'), 0].PTR, ${Actions.Open, Modes.Insert, ""}},
+    ${Modes.Normal, $[u32: Keys.CTRL('s'), 0].PTR, ${Actions.Save, Modes.Insert, ""}},
+
+    ${Modes.Insert, $[u32: Keys.ESCAPE, 0].PTR, ${Actions.SetMode, Modes.Normal, ""}},
+];

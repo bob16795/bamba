@@ -1,0 +1,165 @@
+def std: import "std/std.bam";
+def printf: extern -> void;
+def exit: extern -> void;
+
+def DT: const f32(0.05);
+
+def Engine: import "engine/engine.bam";
+def Starts: import "game/stars.bam";
+def vertShader: embed "vert.glsl";
+def fragShader: embed "frag.glsl";
+
+def shaderFiles: const $[Engine.Shader.File:
+    ${u32(35633), vertShader},
+    ${u32(35632), fragShader},
+  ];
+
+def Mat: const Engine.Mat4(f32);
+
+def PLAYERTEX: const 0;
+def STARTEX: const 1;
+def textures: var Engine.Texture[2];
+
+def State: struct {
+  def playerSprite: prop Engine.Drawers.SpriteSheet;
+  def vel: prop Engine.Vec2(f32);
+
+  def init: proc shader -> State {
+    def result: var State;
+  
+    result.playerSprite = Engine.Drawers.SpriteSheet.init(
+      Engine.Rect(f32).init(286.0, 300.0, f32(*textures[PLAYERTEX].size.x), f32(*textures[PLAYERTEX].size.y)),
+      3, 3
+    );
+  
+    result.playerSprite.current.x = 1;
+    result.playerSprite.current.y = 1;
+
+    result.playerSprite.texture = textures[PLAYERTEX];
+    result.playerSprite.shader = shader;
+
+    return *result;
+  }; 
+
+  def free: proc self -> void {
+    return;
+  };  
+
+  def copy: proc self -> State {
+    return *self;
+  };  
+
+  def lerp: proc prev next pc -> State {
+    def result: var State;
+    result = *prev;
+
+    result.playerSprite.dest.pos = Engine.Vec2(f32).lerp(next.playerSprite.dest.pos, prev.playerSprite.dest.pos, pc);
+
+    return *result;
+  };
+
+  def update: proc self -> void {
+    self.vel.x = f32(*(*Engine.Input.instance).dir.x) * DT * 2000.0 + *self.vel.x * 0.9;
+    self.vel.y = f32(*(*Engine.Input.instance).dir.y) * DT * 2000.0 + *self.vel.y * 0.9;
+
+    self.playerSprite.dest.pos.x = *self.playerSprite.dest.pos.x + *self.vel.x * DT;
+    self.playerSprite.dest.pos.y = *self.playerSprite.dest.pos.y + *self.vel.y * DT;
+
+    self.playerSprite.current.x = 1;
+    self.playerSprite.current.y = 1;
+
+    if (*self.vel.x < 0.0 - 50.0) {
+      self.playerSprite.current.x = 0;
+    };
+
+    if (*self.vel.y > 50.0) {
+      self.playerSprite.current.y = 0;
+    };
+
+    if (*self.vel.x > 50.0) {
+      self.playerSprite.current.x = 2;
+    };
+
+    if (*self.vel.y < 0.0 - 50.0) {
+      self.playerSprite.current.y = 2;
+    };
+
+    return;
+  };
+
+  def draw: proc self sb -> void {
+    sb.draw(self.playerSprite);
+
+    return;
+  };
+};
+
+def main: proc argc argv -> i32 {
+  def gfx: var Engine.GFXContext;
+  gfx = Engine.GFXContext.init("Based in Space");
+
+  Engine.Input.init(gfx);
+
+  def sb: var Engine.SpriteBatch;
+  sb = Engine.SpriteBatch.init();
+  
+  def shader: var Engine.Shader;
+  shader = Engine.Shader.init(shaderFiles.PTR, shaderFiles.LEN);
+  
+  textures[PLAYERTEX] = Engine.Texture.init("ship.png");
+
+  def prevState: var State;
+  def curState: var State;
+  curState = State.init(shader);
+
+  def t: var f32;
+  def currentTime: var f32;
+  def accumulator: var f32;
+
+  t = 0.0;
+
+  currentTime = Engine.GetTime();
+  accumulator = f32(0.0);
+
+  while (gfx.poll()) {
+    def newTime: var f32;
+    def frameTime: var f32;
+
+    newTime = f32(Engine.GetTime());
+    frameTime = *newTime - *currentTime;
+
+    // min framerate
+    if (*frameTime > f32(0.25)) {
+      frameTime = f32(0.25);
+    };
+
+    currentTime = *newTime;
+    accumulator = *accumulator + *frameTime;
+    
+    while (~(*accumulator < DT)) {
+      prevState.free();
+      prevState = curState.copy();
+      curState.update();
+
+      t = *t + DT;
+      accumulator = *accumulator - DT;
+    };
+
+    def state: var State;
+    def alpha: var f32;
+
+    alpha = *accumulator / DT;
+
+    state = State.lerp(prevState, curState, *alpha);
+
+    state.draw(sb);
+
+    sb.blit();
+
+    gfx.swap();
+  };
+
+  sb.deinit();
+
+  return 0;
+};

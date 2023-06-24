@@ -1,0 +1,4 @@
+def Image: struct {};
+
+def stbi_load: extern -> *Image;
+def stbi_image_free: extern -> void;

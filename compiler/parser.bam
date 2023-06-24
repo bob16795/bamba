@@ -1,0 +1,288 @@
+def Definition: struct {
+    def Kind: struct {
+        def Struct: const u8(0);
+        def Proc: const u8(1);
+
+        def toString: proc kind -> *u8 {
+            if (kind == 0) {
+               return "Struct";
+            };
+            if (kind == 1) {
+               return "Proc";
+            };
+
+            return "Invalid";
+        };
+    };
+
+    def name: prop *u8;
+    def kind: prop u8;
+    def subDefs: prop std.ArrayList(*Definition);
+    def in: prop std.ArrayList(*u8);
+
+    def print: proc self lineStart -> i32 {
+        printf("%s%s '%s':\n", lineStart, Kind.toString(*self.kind), *self.name);
+        if (*self.kind == Kind.Struct) {
+            def i: var i32;
+            i = 0;
+
+            while (*i < *self.subDefs.len) {
+                print(*(*self.subDefs.items + *i * (*Definition).SIZE), "  ");
+
+                i = *i + 1;
+            };
+        };
+        printf("  %s???\n", lineStart);
+
+        return 0;
+    };
+};
+
+def DefinitionResult: const std.Result(Definition, *u8);
+
+def Expression: struct {
+    def Kind: struct {
+        def ConstInt: const u8(0);
+        def Identifier: const u8(1);
+
+        def toString: proc kind -> *u8 {
+            if (kind == ConstInt) {
+               return "#";
+            };
+
+            if (kind == Identifier) {
+               return "_";
+            };
+
+            return "Invalid";
+        };
+    };
+
+    def kind: prop u8;
+    def constVal: prop *u8;
+    def constLen: prop i32;
+
+    def print: proc self -> i32 {
+        //printf("%s", Kind.toString(*self.kind));
+        if (*self.kind == Kind.ConstInt) {
+            printf("%.*s\n", *self.constLen, *self.constVal);
+        };
+        if (*self.kind == Kind.Identifier) {
+            printf("%.*s\n", *self.constLen, *self.constVal);
+        };
+
+        return 0;
+    };
+};
+
+def ExpressionResult: const std.Result(Expression, *u8);
+
+def Statement: struct {
+    def Kind: struct {
+        def Return: const u8(0);
+    };
+
+    def kind: prop u8;
+    def expr: prop *Expression;
+    def subStmt: prop *Statement;
+};
+
+def StatementResult: const std.Result(Statement, *u8);
+
+def Parser: struct {
+    def scan: prop *scanner.Scanner;
+    def current: prop scanner.Token;
+    def prev: prop scanner.Token;
+
+    def init: proc scan -> Self {
+        def result: var Self;
+
+        result.scan = scan;
+        result.advance();
+
+        return *result;
+    };
+
+    def makeDefinition: proc self name kind -> *Definition {
+        def result: var *Definition;
+        result = std.mem.Allocator.allocate(Definition.SIZE);
+        (*result).name = name;
+        (*result).kind = kind;
+        (*result).subDefs = std.ArrayList(Definition).init();
+        (*result).in = std.ArrayList(u8).init();
+
+        return *result;
+    };
+
+    def advance: proc self -> i32 {
+        printf("advance start\n");
+
+        self.prev = *self.current;
+
+        def result: var scanner.ResultType;
+        result = (*self.scan).nextToken();
+        printf("advance got\n");
+
+
+        if (result.getErr() != null) {
+           printf("Scanner Error: %s\n", result.getErr());
+           exit(0);
+        };
+        
+        self.current = *result.getOk();
+        self.current.print();
+        printf("advance stop\n");
+
+        return 0;
+    };
+
+    def match: proc self kind -> u1 {
+        printf("match start\n");
+
+        def isMatch: const *self.current.kind == kind;
+
+        if (isMatch) {
+            self.advance();
+        };
+
+        printf("match stop\n");
+        return isMatch;
+    };
+
+    def parseStatement: proc self -> StatementResult {
+        if (self.match(scanner.Token.Kind.Return)) {
+            def result: var *Statement;
+            result = std.mem.Allocator.allocate(Statement.SIZE);
+
+            def exprResult: var ExpressionResult;
+            exprResult = self.parseExpression(0);
+
+            if (exprResult.getErr() != null) {
+                return DefinitionResult.Err(*exprResult.data);
+            };
+
+            (*result).expr = exprResult.getOk();
+
+            return StatementResult.Ok(*result);
+        };
+
+        return StatementResult.Err("Invalid Statement");
+    };
+
+    def parseExpression: proc self level -> ExpressionResult {
+        printf("parse %d", level);
+        def ExpressionLevel: struct {
+            def Assignment: const u8(0);
+            def Or: const u8(1);
+            def And: const u8(2);
+            def Equality: const u8(3);
+            def Comparison: const u8(4);
+            def Term: const u8(5);
+            def Factor: const u8(6);
+            def Unary: const u8(7);
+            def Call: const u8(8);
+            def Primary: const u8(9);
+        };
+
+        if (level == ExpressionLevel.Primary) {
+            def result: var *Expression;
+            if (*self.current.kind == scanner.Token.Kind.Number) {
+                result = std.mem.Allocator.allocate(Expression.SIZE);
+                (*result).kind = Expression.Kind.ConstInt;
+                (*result).constVal = *self.current.lexeme;
+                (*result).constLen = *self.current.lexemelen;
+                self.advance();
+
+                return ExpressionResult.Ok(*result);
+            };
+
+            if (*self.current.kind == scanner.Token.Kind.Identifier) {
+                result = std.mem.Allocator.allocate(Expression.SIZE);
+                (*result).kind = Expression.Kind.Identifier;
+                (*result).constVal = *self.current.lexeme;
+                (*result).constLen = *self.current.lexemelen;
+                self.advance();
+
+                return ExpressionResult.Ok(*result);
+            };
+
+            return ExpressionResult.Err("Bad Primary Expression");
+        };
+
+        def next: const level + 1;
+        def result: var *Expression;
+        def exprResult: var ExpressionResult;
+        exprResult = self.parseExpression(next);
+        if (exprResult.getErr() != null) {
+            return ExpressionResult.Err(*exprResult.getErr());
+        };
+        result = exprResult.getOk();
+        (*result).print();
+
+        return ExpressionResult.Ok(*result);
+    };
+
+    def parseProc: proc self name inline -> DefinitionResult {
+        printf("proc\n");
+
+        def result: var *Definition;
+        result = self.makeDefinition(name, Definition.Kind.Proc);
+
+        while (~self.match(scanner.Token.Kind.Arrow)) {
+            (*result).in.append(*self.current.lexeme);
+            self.advance();
+        };
+
+        def exprResult: var ExpressionResult;
+        exprResult = self.parseExpression(0);
+
+        if (exprResult.getErr() != null) {
+            return DefinitionResult.Err(exprResult.getErr());
+        };
+
+        if (~self.match(scanner.Token.Kind.LeftBrace)) {
+            return DefinitionResult.Err("Expected '{'");
+        };
+
+        while (~self.match(scanner.Token.Kind.RightBrace)) {
+            def defResult: var DefinitionResult;
+            defResult = self.parseStatement();
+            if (defResult.getErr() != null) { return *defResult; };
+            (*result).subDefs.append(*defResult.getOk());
+        };
+
+        return DefinitionResult.Ok(*result);
+    };
+
+    def parseDefinition: proc self -> DefinitionResult {
+        if (~self.match(scanner.Token.Kind.Def)) {
+            return DefinitionResult.Err("Expected 'def'");
+        };
+        def name: const *self.current.lexeme;
+        self.advance();
+
+        if (~self.match(scanner.Token.Kind.Colon)) {
+            return DefinitionResult.Err("Expected ':'");
+        };
+
+        if (self.match(scanner.Token.Kind.Proc)) {
+            return self.parseProc(name, 0);
+        };
+
+        return DefinitionResult.Err("Bad Definition Kind");
+    };
+
+    def parseFile: proc self -> DefinitionResult {
+        def result: var *Definition;
+        result = self.makeDefinition("root", Definition.Kind.Struct);
+            
+        while (~self.match(scanner.Token.Kind.EOF)) {
+            def defResult: var DefinitionResult;
+            defResult = self.parseDefinition();
+            if (defResult.getErr() != null) { return *defResult; };
+            (*result).subDefs.append(defResult.getOk());
+        };
+
+        return DefinitionResult.Ok(*result);
+    };
+};

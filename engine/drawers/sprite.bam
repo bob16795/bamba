@@ -1,0 +1,74 @@
+def Sprite: struct {
+  def texture: prop *Engine.Imports.Texture.Texture;
+  def shader: prop *Engine.Imports.Shader.Shader;
+
+  def uv: prop Engine.Imports.Rects.Rect(f32);
+  def dest: prop Engine.Imports.Rects.Rect(f32);
+
+  def init: proc dest uv -> Sprite {
+      def result: var Sprite;  
+
+      result.uv = uv;
+      result.dest = dest;
+
+      return *result;
+  };
+
+  def getVerts: proc self -> std.ArrayList(Engine.Imports.SpriteBatch.SpriteBatch.Vert) {
+      def result: var std.ArrayList(Engine.Imports.SpriteBatch.SpriteBatch.Vert);
+      def tmp: var Engine.Imports.SpriteBatch.SpriteBatch.Vert;
+      tmp = ${f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0), f32(0.0)};
+      
+      result = std.ArrayList(Engine.Imports.SpriteBatch.SpriteBatch.Vert).init();
+
+      def ax: const *self.dest.pos.x; 
+      def ay: const *self.dest.pos.y; 
+
+      def bx: const *self.dest.pos.x + *self.dest.size.x;
+      def by: const *self.dest.pos.y + *self.dest.size.y;      
+
+      def uax: const *self.uv.pos.x; 
+      def uay: const *self.uv.pos.y; 
+
+      def ubx: const *self.uv.pos.x + *self.uv.size.x;
+      def uby: const *self.uv.pos.y + *self.uv.size.y;      
+
+      tmp.x = ax;
+      tmp.y = ay;
+      tmp.u = uax;
+      tmp.v = uay;
+      result.append(*tmp);
+
+      tmp.x = bx;
+      tmp.y = by;
+      tmp.u = ubx;
+      tmp.v = uby;
+      result.append(*tmp);
+
+      tmp.x = ax;
+      tmp.y = by;
+      tmp.u = uax;
+      tmp.v = uby;
+      result.append(*tmp);
+
+      tmp.x = ax;
+      tmp.y = ay;
+      tmp.u = uax;
+      tmp.v = uay;
+      result.append(*tmp);
+
+      tmp.x = bx;
+      tmp.y = by;
+      tmp.u = ubx;
+      tmp.v = uby;
+      result.append(*tmp);
+
+      tmp.x = bx;
+      tmp.y = ay;
+      tmp.u = ubx;
+      tmp.v = uay;
+      result.append(*tmp);
+
+      return *result; 
+  };
+};

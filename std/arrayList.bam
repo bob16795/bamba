@@ -14,14 +14,14 @@ def ArrayList: proc T -> CTIME {
             return *result;
         };
     
-        def deinit: proc self -> i32 {
+        def deinit: proc self -> void {
             std.mem.Allocator.free(*self.items);
 
-            return 0;
+            return;
         };
 
-        def ensureTotalCapacity: proc self capacity -> i32 {
-            if (*self.capacity > capacity - 1) { return 0; };
+        def ensureTotalCapacity: proc self capacity -> void {
+            if (*self.capacity > capacity - 1) { return; };
 
             def betterCapacity: var i32;
             betterCapacity = capacity + ((capacity / 2) + 8);
@@ -32,7 +32,7 @@ def ArrayList: proc T -> CTIME {
             self.items = std.mem.Allocator.realloc(*self.items, *betterCapacity * T.SIZE);
             self.capacity = *betterCapacity;
 
-            return 0;
+            return;
         };
 
         def addOne: proc self -> *T {
@@ -43,24 +43,24 @@ def ArrayList: proc T -> CTIME {
 
         def addOneAssumeCapacity: proc self -> *T {
             self.len = *self.len + 1;
-            return (*self.items + T.SIZE * *self.len);
+            return (*self.items + T.SIZE * (*self.len - 1));
         };
 
-        def append: proc self item -> i32 {
+        def append: proc self item -> void {
             def newItemPtr: const ArrayListImpl.addOne(self);
 
             newItemPtr = item;
 
-            return 0;
+            return;
         };
 
 
-        def clearAndFree: proc self -> i32 {
+        def clearAndFree: proc self -> void {
             std.mem.Allocator.free(*self.items);
             self.len = 0;
             self.capacity = 0;
 
-            return 0;
+            return;
         };
 
         def pop: proc self -> T {
@@ -68,6 +68,10 @@ def ArrayList: proc T -> CTIME {
             self.len = *self.len - 1;
 
             return val;
+        };
+
+        def getEntry: proc self idx -> *T {
+            return (*self.items + T.SIZE * idx);
         };
 
         def orderedRemove: proc self index -> T {
@@ -89,14 +93,14 @@ def ArrayList: proc T -> CTIME {
             return oldItem;
         };
 
-        def insert: proc self index item -> i32 {
+        def insert: proc self index item -> void {
             ArrayListImpl.ensureTotalCapacity(self, *self.len + 1);
             self.len = *self.len + 1;
 
             std.mem.memmove(*self.items + (index + 1) * T.SIZE, *self.items + index * T.SIZE, T.SIZE * (*self.len - index - 1));
             *self.items + index * T.SIZE = item;
 
-            return 0;
+            return;
         };
     };
 

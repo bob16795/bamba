@@ -1,0 +1,40 @@
+def Result: proc T E -> CTIME {
+    def resultImpl: struct {
+        def val: prop u1;
+        def data: prop *T;
+
+        def Ok: proc data -> Self {
+            def result: var Self;
+            result.val = 0;
+            result.data = data;
+
+            return *result;
+        };
+
+        def Err: proc data -> Self {
+            def result: var Self;
+            result.val = 1;
+            result.data = data;
+
+            return *result;
+        };
+
+        def getOk: proc self -> *T {
+            if (*self.val == 1) {
+               return null;
+            };
+
+            return *self.data;
+        };
+
+        def getErr: proc self -> *E {
+            if (*self.val == 0) {
+               return null;
+            };
+
+            return *self.data;
+        };
+    };
+
+    return resultImpl;
+};

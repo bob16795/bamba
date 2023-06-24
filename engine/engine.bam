@@ -1,0 +1,37 @@
+def Externs: struct {
+    def GL: import "engine/externs/gl.bam";
+    def GLFW: import "engine/externs/glfw.bam";
+    def STBI: import "engine/externs/stbi.bam";
+};
+
+def GetTime: const Externs.GLFW.getTime;
+
+def Imports: struct {
+    def Vecs: import "engine/math/vecs.bam";
+    def Mats: import "engine/math/mats.bam";
+    def Rects: import "engine/math/rects.bam";
+    def Graphics: import "engine/graphics.bam";
+    def Shader: import "engine/types/shader.bam";
+    def Texture: import "engine/types/texture.bam";
+    def Input: import "engine/input.bam";
+    def SpriteBatch: import "engine/spriteBatch.bam";
+    def DSprite: import "engine/drawers/sprite.bam"; 
+    def DSpriteSheet: import "engine/drawers/spriteSheet.bam"; 
+};
+
+def Drawers: struct {
+    def Sprite: const Imports.DSprite.Sprite;
+    def SpriteSheet: const Imports.DSpriteSheet.SpriteSheet;
+};
+
+def Color: const Imports.Vecs.Color;
+def Vec2: const Imports.Vecs.Vec2;
+def Mat4: const Imports.Mats.Mat4;
+def Rect: const Imports.Rects.Rect;
+
+def SpriteBatch: const Imports.SpriteBatch.SpriteBatch;
+def GFXContext: const Imports.Graphics.GFXContext;
+def Texture: const Imports.Texture.Texture;
+def Shader: const Imports.Shader.Shader;
+
+def Input: const Imports.Input.Input;

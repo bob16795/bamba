@@ -1,0 +1,43 @@
+def Shader: struct {
+    def File: struct {
+        def kind: prop u32;
+        def conts: prop *u8;
+    };
+
+    def id: prop u32;
+
+      def init: proc files len -> Shader {
+          def result: var Shader;
+          def idx: var i32;
+
+          def strlen: extern -> u32;
+              
+          result.id = Engine.Externs.GL.glCreateProgram();
+
+          idx = 0;
+          while (*idx < len) {
+              def file: const (files + *idx * File.SIZE); 
+              
+              def shader: const Engine.Externs.GL.glCreateShader(*file.kind);
+              Engine.Externs.GL.glShaderSource(shader, 1, file.conts, null);
+              Engine.Externs.GL.glCompileShader(shader);
+
+              Engine.Externs.GL.glAttachShader(*result.id, shader);
+
+              idx = *idx + 1;
+          };
+
+          Engine.Externs.GL.glLinkProgram(*result.id);
+          Engine.Externs.GL.glUseProgram(*result.id);
+
+
+          def Mat: const Engine.Mat4(f32);
+          def proj: var Mat;
+          proj = Mat.ortho(f32(0.0), f32(640.0), f32(480.0), f32(0.0), f32(100.0), f32(0.0));
+
+          def loc: const Engine.Externs.GL.glGetUniformLocation(*result.id, "projection");
+          Engine.Externs.GL.glUniformMatrix4fv(loc, 1, 0, proj.data);
+
+          return *result;
+    };
+};

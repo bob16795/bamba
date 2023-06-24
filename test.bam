@@ -1,8 +1,17 @@
 def std: import "std/std.bam";
 
+// externs
 def printf: extern -> i32;
 
+def lol: const 5 == 5;
+
+// main proc
 def main: proc -> i32 {
+    printf("%d\n", lol);
+
+  def i: var i32;
+  i = 0;
+
   def HM: const std.HashMap(u8, i32);
   def map: var HM;
 

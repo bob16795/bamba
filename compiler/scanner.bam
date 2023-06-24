@@ -1,0 +1,216 @@
+def Token: struct {
+    def Kind: struct {
+        // one char
+        def LeftBrace: const u8(0);
+        def RightBrace: const u8(1);
+        def SemiColon: const u8(2);
+        def Colon: const u8(3);
+        def Plus: const u8(4);
+
+        // one or two chars
+        def Minus: const u8(5);
+        def Arrow: const u8(6);
+
+        // keywords
+        def Return: const u8(7);
+        def Proc: const u8(8);
+        def Def: const u8(9);
+
+        // multi char
+        def Identifier: const u8(10);
+        def Number: const u8(11);
+
+        // control
+        def EOF: const u8(255);
+    };
+
+    def lexeme: prop *u8;
+    def lexemelen: prop u32;
+    def line: prop u32;
+    def col: prop u32;
+    def kind: prop u8;
+
+    def print: proc self -> i32 {
+        printf("%d: %.*s @ %d:%d\n", *self.kind, *self.lexemelen, *self.lexeme, *self.line, *self.col);
+
+        return 0;
+    };
+};
+
+def ResultType: const std.Result(Token, *u8);
+
+def Scanner: struct {
+    def src: prop *u8;
+    def srclen: prop u32;
+    def start: prop *u8;
+    def current: prop *u8;
+    def line: prop u32;
+    def col: prop u32;
+
+    def init: proc file src srclen -> Scanner {
+        def result: var Scanner;
+
+        printf("BAM %s\n", file);
+
+        result.src = src;
+        result.srclen = srclen;
+        result.start = src;
+        result.current = src;
+
+        result.line = 1;
+        result.col = 1;
+
+        return *result;
+    };
+
+    def nextToken: proc self -> ResultType {
+        self.skipWhitespace();
+        self.start = *self.current;
+
+        if (self.isAtEnd()) {
+            return ResultType.Ok(self.makeToken(Token.Kind.EOF));
+        };
+
+        def c: const *self.advance();
+        def next: const *self.peek();
+        printf("'%c'\n", c);
+
+        if ((c > 'A' - 1 & c < 'Z' + 1) | (c > 'a' - 1 & c < 'z' + 1)) {
+            return self.identifier();
+        };
+
+        if ((c > '0' - 1 & c < '9' + 1)) {
+            return self.number();
+        };
+        
+        if (c == '-') {
+            def kind: var u8;
+
+            kind = Token.Kind.Minus;
+            if (next == '>') {
+                self.advance();
+                kind = Token.Kind.Arrow;
+            };
+            def tok: const self.makeToken(*kind);
+            tok.print();
+
+            return ResultType.Ok(tok);
+        };
+
+
+        if (c == '+') { return ResultType.Ok(self.makeToken(Token.Kind.Plus)); };
+        if (c == ';') { return ResultType.Ok(self.makeToken(Token.Kind.SemiColon)); };
+        if (c == ':') { return ResultType.Ok(self.makeToken(Token.Kind.Colon)); };
+        if (c == '{') { return ResultType.Ok(self.makeToken(Token.Kind.LeftBrace)); };
+        if (c == '}') { return ResultType.Ok(self.makeToken(Token.Kind.RightBrace)); };
+
+        return ResultType.Err("Invalid Char");
+    };
+
+    def number: proc self -> ResultType {
+        def done: var i1;
+        done = 0;
+
+        while (*done == 0) {
+            def c: const *self.peek();
+            done = ~((c > '0' - 1 & c < '9' + 1));
+            if (self.isAtEnd()) { done = 1; };
+            if (*done == 0) {
+               self.advance();
+            };
+        };
+        return ResultType.Ok(self.makeToken(Token.Kind.Number));
+    };
+
+    def identifier: proc self -> ResultType {
+        def done: var i1;
+        done = 0;
+
+        while (*done == 0) {
+            def c: const *(*self.current);
+            done = ~((c > 'A' - 1 & c < 'Z' + 1) | (c > 'a' - 1 & c < 'z' + 1) | (c > '0' - 1 & c < '9' + 1) | c == '_');
+            if (self.isAtEnd()) { done = 1; };
+            if (*done == 0) {
+               self.advance();
+            };
+        };
+
+        return ResultType.Ok(self.makeToken(self.identifierType()));
+    };
+
+    def skipWhitespace: proc self -> i32 {
+        while (1) {
+            def c: const *self.peek();
+            if (c == '/') {
+                if (*self.peekNext() == '/') {
+                    while (*self.peek() != '\n' & self.isAtEnd() == 0) {
+                        self.advance();
+                    };
+                } else {
+                    return 0;
+                };
+            } else {
+                if (c == ' ' | c == '\r' | c == '\t' | c == '\n') {
+                    self.advance();
+                } else {
+                    return 0;
+                };
+                if (c == '\n') {
+                   self.line = *self.line + 1;
+                   self.col = 1;
+                };
+            };
+       };
+
+        return 0;
+    };
+
+    def advance: proc self -> *u8 {
+        def result: const *self.current;
+
+        self.col = *self.col + 1;
+        self.current = *self.current + i32(1);
+        return result;
+    };
+
+    def peek: proc self -> *u8 {
+        return *self.current;
+    };
+
+    def peekNext: proc self -> *u8 {
+        return (*self.current + i32(1));
+    };
+
+    def isAtEnd: proc self -> u1 {
+        def currlen: const *self.current - *self.src;
+        return u32(currlen) > *self.srclen - i32(1);
+    };
+
+    def makeToken: proc self kind -> *Token {
+        def result: var *Token;
+        result = std.mem.Allocator.allocate(Token.SIZE);
+
+        (*result).lexeme = *self.start;
+        (*result).lexemelen = self.currentLen();
+        (*result).kind = kind;
+        (*result).line = *self.line;
+        (*result).col = *self.col - self.currentLen();
+
+        return *result;
+    };
+
+    def currentLen: proc self -> i32 {
+        return *self.current - *self.start;
+    };
+
+    def identifierType: proc self -> u8 {
+        def memcmp: extern -> i32;
+        def len: const self.currentLen();
+
+        if (memcmp("def", *self.start, 3) == 0 & len == 3) { return Token.Kind.Def; };
+        if (memcmp("proc", *self.start, 4) == 0 & len == 4) { return Token.Kind.Proc; };
+        if (memcmp("return", *self.start, 6) == 0 & len == 6) { return Token.Kind.Return; };
+
+        return Token.Kind.Identifier;
+    };
+};

@@ -1,0 +1,13 @@
+def Stars: struct {
+  def Star: struct {
+    def speed: prop f32;
+    def tp: prop u1;
+    def pos: prop Engine.Vec2(f32);
+    def color: prop Engine.Color;
+  };
+
+  def buffer: var u32;
+  def stars: var std.ArrayList(Star);
+  def tex: var *Engine.Texture;
+  def shd: var *Engine.Shader;
+};

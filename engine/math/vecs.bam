@@ -1,0 +1,79 @@
+def Vec2: proc T -> CTIME {
+    def Vec2Impl: struct {
+        def x: prop T;
+        def y: prop T;
+
+        def mul: proc self sc -> Vec2Impl {
+            return ${
+              *self.x * sc,
+              *self.y * sc,
+            };
+        };
+        
+        def add: proc self other -> Vec2Impl {
+            return ${
+              *self.x + *other.x,
+              *self.y + *other.y,
+            };
+        };
+       
+        def lerp: proc self other pc -> Vec2Impl {
+            def a: var Vec2Impl; 
+            def b: var Vec2Impl; 
+            a = Vec2Impl.mul(self, pc);
+            b = Vec2Impl.mul(other, f32(1.0) - pc); 
+
+            return Vec2Impl.add(a, b);
+        };
+    };
+
+    return Vec2Impl;
+};
+
+def Vec3: proc T -> CTIME {
+    def Vec3Impl: struct {
+        def x: prop T;
+        def y: prop T;
+        def z: prop T;
+
+        def sub: proc self other -> Vec3Impl {
+          return ${
+            self.x - other.x,
+            self.y - other.y,
+            self.z - other.z,
+          };
+        };
+
+        def dot: proc self other -> T {
+          return (self.x * other.x) +
+                 (self.y * pther.y) +
+                 (self.z * pther.z);
+        };
+
+        def mag: proc self -> T {
+          def m: const self.mag;
+          def sqrt: extern -> T;
+
+          return sqrt(self.dot(self));
+        };
+
+        def normalize: proc self -> Vec3Impl {
+          def m: const self.mag();
+
+          return ${
+            self.x / mag,
+            self.y / mag,
+            self.z / mag,
+          };
+        };
+    };
+
+    return Vec3Impl;
+};
+
+def Color: struct {
+    def r: prop f32;
+    def g: prop f32;
+    def b: prop f32;
+    def a: prop f32;
+};
